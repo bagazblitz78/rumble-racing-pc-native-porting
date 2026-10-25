@@ -140,8 +140,55 @@ class Asm:
         """mov dword ptr [base + idx], r32."""
         self.emit(_rex(r=src, x=idx, b=base), 0x89, _modrm(0, src, 4), _modrm(0, idx, base))
 
+    def ld64_rm(self, dst: int, base: int, disp: int = 0):
+        """mov r64, qword ptr [base + disp32]."""
+        self.emit(_rex(w=True, r=dst, b=base), 0x8B, _modrm(2, dst, base),
+                  struct.pack("<i", disp))
+
+    def ld8_ram(self, dst: int, base: int, idx: int):
+        """mov r8, byte ptr [base + idx]."""
+        self.emit(_rex(r=dst, x=idx, b=base), 0x8A, _modrm(0, dst, 4), _modrm(0, idx, base))
+
+    def ld16_ram(self, dst: int, base: int, idx: int):
+        """mov r16, word ptr [base + idx]."""
+        self.emit(0x66, _rex(r=dst, x=idx, b=base), 0x8B, _modrm(0, dst, 4),
+                  _modrm(0, idx, base))
+
+    def st8_ram(self, base: int, idx: int, src: int):
+        """mov byte ptr [base + idx], r8."""
+        self.emit(_rex(r=src, x=idx, b=base), 0x88, _modrm(0, src, 4), _modrm(0, idx, base))
+
+    def st16_ram(self, base: int, idx: int, src: int):
+        """mov word ptr [base + idx], r16."""
+        self.emit(0x66, _rex(r=src, x=idx, b=base), 0x89, _modrm(0, src, 4),
+                  _modrm(0, idx, base))
+
+    def movsx8(self, dst: int, src8: int):
+        """movsx r32, r8."""
+        self.emit(_rex(r=dst, b=src8), 0x0F, 0xBE, _modrm(3, dst, src8))
+
+    def movsx16(self, dst: int, src16: int):
+        """movsx r32, r16 (opcode 0F BF)."""
+        self.emit(_rex(r=dst, b=src16), 0x0F, 0xBF, _modrm(3, dst, src16))
+
+    def xchg_al_ah(self):
+        """xchg al, ah (byte-order swap for big-endian halves)."""
+        self.emit(0x86, 0xC4)
+
+    def mov_ri64(self, dst: int, imm: int):
+        """movabs r64, imm64."""
+        self.emit(_rex(w=True, b=dst), 0xB8 + (dst & 7),
+                  struct.pack("<Q", imm & 0xFFFFFFFFFFFFFFFF))
+
+    def jmp_mem_rip(self, disp: int):
+        """jmp qword ptr [rip + disp32] (indirect jump via memory, e.g. IAT)."""
+        self.emit(0xFF, 0x25, struct.pack("<i", disp))
+
     def movzx(self, dst: int, src8: int):
         self.emit(_rex(r=dst, b=src8), 0x0F, 0xB6, _modrm(3, dst, src8))
+
+    def movzx16(self, dst: int, src16: int):
+        self.emit(_rex(r=dst, b=src16), 0x0F, 0xB7, _modrm(3, dst, src16))
 
     def movsxd(self, dst: int, src32: int):
         self.emit(_rex(w=True, r=dst, b=src32), 0x63, _modrm(3, dst, src32))
@@ -171,10 +218,25 @@ class Asm:
         self.emit(_rex(r=b, b=a), 0x85, _modrm(3, b, a))
 
     def bswap(self, reg: int):
-        self.emit(_rex(r=reg), 0x0F, 0xC8 + (reg & 7))
+        self.emit(_rex(b=reg), 0x0F, 0xC8 + (reg & 7))
 
     def imul_rr(self, dst: int, src: int):
         self.emit(_rex(r=dst, b=src), 0x0F, 0xAF, _modrm(3, dst, src))
+
+    def imul64_rr(self, dst: int, src: int):
+        self.emit(_rex(w=True, r=dst, b=src), 0x0F, 0xAF, _modrm(3, dst, src))
+
+    def not_r(self, reg: int):
+        self.emit(_rex(b=reg), 0xF7, _modrm(3, 2, reg))
+
+    def shl64_cl(self, reg: int):
+        self.emit(_rex(w=True, b=reg), 0xD3, _modrm(3, 4, reg))
+
+    def shr64_ri(self, reg: int, amount: int):
+        self.emit(_rex(w=True, b=reg), 0xC1, _modrm(3, 5, reg), amount & 0x3F)
+
+    def shl64_ri(self, reg: int, amount: int):
+        self.emit(_rex(w=True, b=reg), 0xC1, _modrm(3, 4, reg), amount & 0x3F)
 
     def mul_r(self, src: int):
         self.emit(_rex(b=src), 0xF7, _modrm(3, 4, src))
@@ -184,6 +246,9 @@ class Asm:
 
     def idiv_r(self, src: int):
         self.emit(_rex(b=src), 0xF7, _modrm(3, 7, src))
+
+    def div_r(self, src: int):
+        self.emit(_rex(b=src), 0xF7, _modrm(3, 6, src))
 
     def neg_r(self, reg: int):
         self.emit(_rex(b=reg), 0xF7, _modrm(3, 3, reg))

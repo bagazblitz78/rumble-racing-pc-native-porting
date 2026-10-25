@@ -111,6 +111,66 @@ def test_bswap_and_mul_family():
     ]
 
 
+def test_64bit_forms_for_helpers():
+    a = Asm()
+    a.imul64_rr(RAX, RCX)   # REX.W 0F AF
+    a.not_r(RCX)            # F7 /2
+    a.div_r(RCX)            # F7 /6
+    a.shl64_cl(RDX)         # REX.W D3 /4
+    insns = disasm(bytes(a.buf))
+    assert insns == ["imul rax, rcx", "not ecx", "div ecx", "shl rdx, cl"]
+
+
+def test_memory_and_extension_forms():
+    a = Asm()
+    a.ld64_rm(RAX, R15, 272)        # guest RAM pointer from ctx
+    a.mov_ri64(RAX, 0x140000000)    # movabs (stub building)
+    a.ld8_ram(RCX, R14, RDX)
+    a.ld16_ram(RCX, R14, RDX)
+    a.st8_ram(R14, RDX, RCX)
+    a.st16_ram(R14, RDX, RCX)
+    a.movsx8(RAX, RAX)
+    a.movsx16(RAX, RAX)
+    a.xchg_al_ah()
+    insns = disasm(bytes(a.buf))
+    assert insns == [
+        "mov rax, qword ptr [r15 + 0x110]",
+        "movabs rax, 0x140000000",
+        "mov cl, byte ptr [r14 + rdx]",
+        "mov cx, word ptr [r14 + rdx]",
+        "mov byte ptr [r14 + rdx], cl",
+        "mov word ptr [r14 + rdx], cx",
+        "movsx eax, al",
+        "movsx eax, ax",
+        "xchg ah, al",
+    ]
+
+
+def test_shift64_imm():
+    a = Asm()
+    a.shr64_ri(RAX, 32)      # REX.W C1 /5
+    a.shl64_ri(RDX, 32)
+    assert disasm(bytes(a.buf)) == ["shr rax, 0x20", "shl rdx, 0x20"]
+
+
+def test_movzx16():
+    a = Asm()
+    a.movzx(RAX, RDX)          # byte: 0F B6
+    a.movzx16(RAX, RDX)        # word: 0F B7
+    a.movzx16(R10, R9)         # high regs need REX.R + REX.B
+    assert disasm(bytes(a.buf)) == [
+        "movzx eax, dl",
+        "movzx eax, dx",
+        "movzx r10d, r9w",
+    ]
+
+
+def test_jmp_indirect_rip():
+    a = Asm()
+    a.jmp_mem_rip(0x100)
+    assert disasm(bytes(a.buf)) == ["jmp qword ptr [rip + 0x100]"]
+
+
 def test_push_pop():
     a = Asm()
     a.push(R14)
