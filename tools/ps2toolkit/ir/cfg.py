@@ -120,6 +120,10 @@ def build_function(insn_at: InsnAt, entry: int, is_function_start: IsFunctionSta
                 target = addr + 4 + insn.imm * 4
                 if target % 4:
                     raise ValueError(f"misaligned branch target {target:#x}")
+                if stop_addrs and target > max(stop_addrs):
+                    raise ValueError(
+                        f"branch target {target:#x} beyond region "
+                        f"(stop {max(stop_addrs):#x}) at {addr:#x}")
                 block.term = BranchTerm(insn, target, addr + 8, delay)
                 for t in (target, addr + 8):
                     if not is_function_start(t) and t not in starts:

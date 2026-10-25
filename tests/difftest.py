@@ -40,7 +40,11 @@ def run_case(words, seed: int | None = None, state: EEState | None = None,
     initial = state if state is not None else make_state(seed)
 
     insn_at = lambda addr: decode(mem.read32(addr), addr)  # noqa: E731
+    # golden must not leak its memory writes into the native run (and vice
+    # versa): snapshot guest RAM around each execution
+    snapshot = bytes(mem.data)
     golden = run_golden(mem, initial, CODE, stop, max_steps)
+    mem.data[:] = snapshot
     program = compile_program(insn_at, CODE, stop_addrs={stop})
     native = run_native(program, mem, initial)
     try:
