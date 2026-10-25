@@ -57,9 +57,10 @@ def _parse_dir_record(
     size = _both32(rec, 10)
     flags = rec[25]
     name_len = rec[32]
-    name = _decode_name(rec[33 : 33 + name_len])
-    if skip_dot and name in ("\x00", "\x01"):
+    raw_name = rec[33 : 33 + name_len]
+    if skip_dot and raw_name in (b"\x00", b"\x01"):
         return None, length  # "." and ".." entries inside directory extents
+    name = _decode_name(raw_name)
     return ISOFile(name=name, lba=lba, size=size, is_dir=bool(flags & 0x02)), length
 
 

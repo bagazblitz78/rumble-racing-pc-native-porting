@@ -39,6 +39,7 @@ def test_playstation_via_pvd_only(tmp_path):
 
 def test_root_listing(iso):
     entries = {f.name: f for f in iso.list_dir(iso.root)}
+    assert "" not in entries  # regression: "." entry (name byte 0x00) must be skipped
     assert "HELLO.TXT;1" in entries
     assert "SUB" in entries
     assert entries["HELLO.TXT;1"].is_dir is False

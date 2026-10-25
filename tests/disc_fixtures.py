@@ -61,7 +61,9 @@ def directory_extent(self_lba: int, parent_lba: int, entries: list[bytes]) -> by
     return bytes(data).ljust(ISO_BLOCK, b"\x00")
 
 
-def volume_descriptor(vd_type: int, system_id: bytes, volume_id: bytes) -> bytes:
+def volume_descriptor(
+    vd_type: int, system_id: bytes, volume_id: bytes, root_lba: int = ROOT_LBA, total_lbas: int = TOTAL_LBAS
+) -> bytes:
     sector = bytearray(ISO_BLOCK)
     sector[0] = vd_type
     sector[1:6] = b"CD001"
@@ -70,11 +72,11 @@ def volume_descriptor(vd_type: int, system_id: bytes, volume_id: bytes) -> bytes
     sector[8 + len(system_id) : 40] = b" " * (40 - 8 - len(system_id))
     sector[40 : 40 + len(volume_id)] = volume_id
     sector[40 + len(volume_id) : 72] = b" " * (72 - 40 - len(volume_id))
-    sector[80:88] = both32(TOTAL_LBAS)  # volume space size (in blocks)
+    sector[80:88] = both32(total_lbas)  # volume space size (in blocks)
     sector[120:124] = both16(1)  # volume set size
     sector[124:128] = both16(1)  # volume sequence number
     sector[128:132] = both16(ISO_BLOCK)  # logical block size
-    sector[156:190] = dir_record(b"\x00", ROOT_LBA, ISO_BLOCK, is_dir=True)
+    sector[156:190] = dir_record(b"\x00", root_lba, ISO_BLOCK, is_dir=True)
     return bytes(sector)
 
 
@@ -106,5 +108,42 @@ def build_test_disc(pvd_system: bytes = b"LINUX", svd_system: bytes = b"PLAYSTAT
     }
     out = bytearray()
     for lba in range(TOTAL_LBAS):
+        out += make_raw_sector(lba, blocks.get(lba, b""))
+    return bytes(out)
+
+
+# --- boot-disc fixture (SYSTEM.CNF + boot ELF) ---
+BOOT_ROOT_LBA = 20
+BOOT_CNF_LBA = 21
+BOOT_LBA = 22
+BOOT_TOTAL_LBAS = 26
+
+FAKE_ELF = b"\x7fELF" + bytes([0x01, 0x02, 0x01, 0x00]) + b"\x98\x83\x00\x00" + b"R" * 120
+
+BOOT_CNF_CONTENT = b"BOOT2 = cdrom0:\\SLUS_201.74;1\nVER = 1.00\n"
+
+
+def build_disc_with_boot(elf_offset: int = 0) -> bytes:
+    """Disc with SYSTEM.CNF;1 and SLUS_201.74;1 (fake ELF at elf_offset)."""
+    boot_size = elf_offset + len(FAKE_ELF)
+    boot_data = bytearray(boot_size)
+    boot_data[elf_offset : elf_offset + len(FAKE_ELF)] = FAKE_ELF
+    blocks: dict[int, bytes] = {
+        16: volume_descriptor(1, b"LINUX", b"BOOTVOL", root_lba=BOOT_ROOT_LBA, total_lbas=BOOT_TOTAL_LBAS),
+        17: bytes([0]) + b"CD001" + bytes(ISO_BLOCK - 6),  # terminator
+        BOOT_ROOT_LBA: directory_extent(
+            BOOT_ROOT_LBA,
+            BOOT_ROOT_LBA,
+            [
+                dir_record(b"SYSTEM.CNF;1", BOOT_CNF_LBA, len(BOOT_CNF_CONTENT), False),
+                dir_record(b"SLUS_201.74;1", BOOT_LBA, boot_size, False),
+            ],
+        ),
+        BOOT_CNF_LBA: BOOT_CNF_CONTENT,
+    }
+    for i in range(0, len(boot_data), ISO_BLOCK):
+        blocks[BOOT_LBA + i // ISO_BLOCK] = boot_data[i : i + ISO_BLOCK]
+    out = bytearray()
+    for lba in range(BOOT_TOTAL_LBAS):
         out += make_raw_sector(lba, blocks.get(lba, b""))
     return bytes(out)
