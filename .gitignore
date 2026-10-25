@@ -1,0 +1,26 @@
+# User game images — never commit
+games/
+*.bin
+*.cue
+*.7z
+*.iso
+*.elf
+*.IRX
+*.irx
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+vendor/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Generated outputs
+out/
+*.log

@@ -1,0 +1,3 @@
+pytest>=8.0
+# Optional: independent disassembly verification of emitted x64 (MIT license)
+capstone>=5.0
