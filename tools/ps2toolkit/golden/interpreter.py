@@ -3,11 +3,13 @@
 Correctness oracle for the recompiler: implements the documented
 semantics of the supported instruction subset, including:
 
-- 32-bit GPR semantics (results are 32-bit, $zero hardwired)
+- 128-bit GPR containers: 32-bit results sign-extend, 64-bit ops wrap at
+  64 bits, and MMI uses the full width; $zero is hardwired
 - branch/jump delay slots (condition evaluated BEFORE the delay slot;
   link register written when the jump executes)
-- big-endian memory, kseg address translation (phys = addr & 0x1FFFFFFF)
-- big-endian LWL/LWR/SWL/SWR:
+- little-endian data memory (PS2 EE), kseg address translation
+  (phys = addr & 0x1FFFFFFF); instruction fetch is little-endian as well
+- little-endian LWL/LWR/SWL/SWR:
     LWL(A): bytes A..word_end   -> high side of rt   (load pair:  lwl X, lwr X+3)
     LWR(A): bytes word_start..A -> low side of rt
     SWL(A): high side of rt     -> bytes A..word_end (store pair: swl X, swr X+3)
@@ -111,15 +113,15 @@ class EEMemory:
         self.data[phys : phys + len(blob)] = blob
 
     def read32(self, addr: int) -> int:
-        """Big-endian data word (the EE's data endianness)."""
-        return int.from_bytes(self.read(addr, 4), "big")
+        """Little-endian data word (the EE's data endianness)."""
+        return int.from_bytes(self.read(addr, 4), "little")
 
     def fetch32(self, addr: int) -> int:
         """Little-endian instruction word (MIPS instruction fetch)."""
         return int.from_bytes(self.read(addr, 4), "little")
 
     def write32(self, addr: int, value: int):
-        self.write(addr, (value & M32).to_bytes(4, "big"))
+        self.write(addr, (value & M32).to_bytes(4, "little"))
 
 
 class EEState:
@@ -138,8 +140,17 @@ class EEState:
         return self.regs[reg]
 
 
-def _load_be(mem: EEMemory, addr: int, count: int) -> int:
-    return int.from_bytes(mem.read(addr, count), "big")
+def _load_le(mem: EEMemory, addr: int, count: int) -> int:
+    """Little-endian data load."""
+    return int.from_bytes(mem.read(addr, count), "little")
+
+
+def _set_hi32(st: EEState, value: int) -> None:
+    st.hi = (st.hi & (M128 ^ M32)) | (value & M32)
+
+
+def _set_lo32(st: EEState, value: int) -> None:
+    st.lo = (st.lo & (M128 ^ M32)) | (value & M32)
 
 
 def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
@@ -243,43 +254,43 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
         st._set(rd, sext64(st._get(rs) - st._get(rt)))
     elif m == "mult":
         prod = s32(st._get(rs)) * s32(st._get(rt))
-        st.hi = (prod >> 32) & M32
-        st.lo = prod & M32
+        _set_hi32(st, prod >> 32)
+        _set_lo32(st, prod)
     elif m == "multu":
         prod = (st._get(rs) & M32) * (st._get(rt) & M32)
-        st.hi = (prod >> 32) & M32
-        st.lo = prod & M32
+        _set_hi32(st, prod >> 32)
+        _set_lo32(st, prod)
     elif m == "div":
         dividend, divisor = s32(st._get(rs)), s32(st._get(rt))
         if divisor == 0:
-            st.lo = 0x7FFFFFFF if dividend >= 0 else 0x80000000
-            st.hi = dividend & M32
+            _set_lo32(st, 0x7FFFFFFF if dividend >= 0 else 0x80000000)
+            _set_hi32(st, dividend)
         elif dividend == -0x80000000 and divisor == -1:
-            st.lo = 0x80000000
-            st.hi = 0
+            _set_lo32(st, 0x80000000)
+            _set_hi32(st, 0)
         else:
             q = abs(dividend) // abs(divisor)
             if (dividend < 0) != (divisor < 0):
                 q = -q
             r = dividend - q * divisor
-            st.lo = q & M32
-            st.hi = r & M32
+            _set_lo32(st, q)
+            _set_hi32(st, r)
     elif m == "divu":
         dividend, divisor = st._get(rs) & M32, st._get(rt) & M32
         if divisor == 0:
-            st.lo = M32
-            st.hi = dividend
+            _set_lo32(st, M32)
+            _set_hi32(st, dividend)
         else:
-            st.lo = dividend // divisor
-            st.hi = dividend % divisor
+            _set_lo32(st, dividend // divisor)
+            _set_hi32(st, dividend % divisor)
     elif m == "mfhi":
-        st._set(rd, sext32(st.hi))
+        st._set(rd, sext32(st.hi & M32))
     elif m == "mflo":
-        st._set(rd, sext32(st.lo))
+        st._set(rd, sext32(st.lo & M32))
     elif m == "mthi":
-        st.hi = st._get(rs) & M32
+        _set_hi32(st, st._get(rs))
     elif m == "mtlo":
-        st.lo = st._get(rs) & M32
+        _set_lo32(st, st._get(rs))
     elif m == "syscall":
         raise GuestSyscall((insn.raw >> 6) & 0xFFFFF, insn.addr,
                            number=st._get(3))
@@ -293,29 +304,29 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
         elif m == "lbu":
             st._set(rt, mem.read(addr, 1)[0])
         elif m == "lh":
-            v = _load_be(mem, addr, 2)
+            v = _load_le(mem, addr, 2)
             st._set(rt, sext32(v - 0x10000 if v & 0x8000 else v))
         elif m == "lhu":
-            st._set(rt, _load_be(mem, addr, 2))
+            st._set(rt, _load_le(mem, addr, 2))
         elif m == "lw":
-            st._set(rt, sext32(_load_be(mem, addr, 4)))
+            st._set(rt, sext32(_load_le(mem, addr, 4)))
         elif m == "lwu":
-            st._set(rt, _load_be(mem, addr, 4))
+            st._set(rt, _load_le(mem, addr, 4))
         elif m == "ld":
-            st._set(rt, sext64(_load_be(mem, addr, 8)))
+            st._set(rt, sext64(_load_le(mem, addr, 8)))
         elif m == "lq":
-            st._set(rt, _load_be(mem, addr, 16))
+            st._set(rt, _load_le(mem, addr, 16))
         elif m == "lwl":
             byte = addr & 3
             n = 4 - byte
-            val = _load_be(mem, addr, n)
+            val = _load_le(mem, addr, n)
             keep = (1 << (8 * byte)) - 1  # keep low `byte` bytes of rt
             st._set(rt, sext32((val << (8 * byte)) | (st._get(rt) & keep)))
         elif m == "lwr":
             byte = addr & 3
             n = byte + 1
             aligned = addr & ~3
-            val = _load_be(mem, aligned, n)
+            val = _load_le(mem, aligned, n)
             keep = M32 ^ ((1 << (8 * n)) - 1)  # keep high (4-n) bytes of rt
             st._set(rt, sext32((st._get(rt) & keep) | val))
     elif m in ("sb", "sh", "sw", "sd", "sq", "swl", "swr"):
@@ -324,24 +335,27 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
         if m == "sb":
             mem.write(addr, bytes([value & 0xFF]))
         elif m == "sh":
-            mem.write(addr, (value & 0xFFFF).to_bytes(2, "big"))
+            mem.write(addr, (value & 0xFFFF).to_bytes(2, "little"))
         elif m == "sw":
-            mem.write(addr, (value & M32).to_bytes(4, "big"))
+            mem.write(addr, (value & M32).to_bytes(4, "little"))
         elif m == "sd":
-            mem.write(addr, (value & M64).to_bytes(8, "big"))
+            mem.write(addr, (value & M64).to_bytes(8, "little"))
         elif m == "sq":
-            mem.write(addr, (value & M128).to_bytes(16, "big"))
+            mem.write(addr, (value & M128).to_bytes(16, "little"))
         elif m == "swl":
             byte = addr & 3
             n = 4 - byte
-            part = (value & M32) >> (8 * byte)  # high `n` bytes of rt
-            mem.write(addr, part.to_bytes(n, "big"))
+            part = (value >> (8 * byte)) & ((1 << (8 * n)) - 1)
+            mem.write(addr, part.to_bytes(n, "little"))
         elif m == "swr":
             byte = addr & 3
             n = byte + 1
             aligned = addr & ~3
             part = value & ((1 << (8 * n)) - 1)  # low `n` bytes of rt
-            mem.write(aligned, part.to_bytes(n, "big"))
+            mem.write(aligned, part.to_bytes(n, "little"))
+    elif insn.opcode == 0x1C:  # MMI
+        from .mmi import execute_mmi
+        execute_mmi(st, insn)
     else:
         raise UnsupportedInstruction(insn.addr, insn.raw, insn.mnemonic)
 

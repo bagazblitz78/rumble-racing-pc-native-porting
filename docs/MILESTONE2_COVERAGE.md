@@ -5,8 +5,8 @@
 - **Entry**: `0x00100008`
 - **Executable words**: 244,704
 - **Reachable words (recursive descent)**: 155,613
-- **Decoded by MVP front-end**: 123,502 (79.36%)
-- **Unsupported words**: 32,111
+- **Decoded by MVP front-end**: 130,882 (84.11%)
+- **Unsupported words**: 24,731
 - **Indirect control transfers**: 116
 
 ## Executable segments
@@ -20,23 +20,23 @@
 | Category | Words |
 |---|---|
 | cop1-fpu | 14,065 |
-| mmi | 7,380 |
 | fpu-memory | 7,231 |
 | vu-memory | 1,937 |
 | cop2-vu0 | 1,454 |
 | 64-bit-memory | 44 |
 
-## Top mnemonics (of 86)
+## Top mnemonics (of 101)
 
 | Mnemonic | Words |
 |---|---|
-| `unsupported` | 32,111 |
+| `unsupported` | 24,731 |
 | `addiu` | 20,291 |
 | `lw` | 12,163 |
 | `nop` | 11,016 |
 | `lui` | 7,635 |
 | `beq` | 7,444 |
 | `sw` | 7,195 |
+| `paddub` | 6,889 |
 | `jal` | 6,234 |
 | `addu` | 5,632 |
 | `sq` | 4,399 |
@@ -49,32 +49,31 @@
 | `sd` | 2,168 |
 | `or` | 1,734 |
 | `andi` | 1,640 |
-| `jr` | 1,589 |
 
 ## Unsupported samples
 
 | Address | Word | Category |
 |---|---|---|
-| `0x00121630` | `0x70808E28` | mmi |
-| `0x0012163C` | `0x72202628` | mmi |
-| `0x0012165C` | `0x70001628` | mmi |
-| `0x0011DDBC` | `0x70C53018` | mmi |
-| `0x001ABFC0` | `0x70808628` | mmi |
-| `0x001AC028` | `0x72202628` | mmi |
-| `0x001AC038` | `0x72201628` | mmi |
-| `0x001209EC` | `0x70802E28` | mmi |
-| `0x00120A28` | `0x700846E9` | mmi |
-| `0x00120AA8` | `0x70801628` | mmi |
-| `0x00120A30` | `0x71081389` | mmi |
-| `0x001209E4` | `0x70801628` | mmi |
-| `0x001209C0` | `0x70802E28` | mmi |
-| `0x001AC030` | `0x70002E28` | mmi |
-| `0x001AC010` | `0x70001628` | mmi |
-| `0x001B6270` | `0x70002628` | mmi |
-| `0x00122980` | `0x70008628` | mmi |
-| `0x00122990` | `0x72002628` | mmi |
-| `0x0010EA94` | `0x70E31818` | mmi |
-| `0x00122998` | `0x70002E28` | mmi |
+| `0x001681B0` | `0xC4600060` | fpu-memory |
+| `0x001681C8` | `0xE48025D0` | fpu-memory |
+| `0x001681D0` | `0xC48025D0` | fpu-memory |
+| `0x001681DC` | `0x44830800` | cop1-fpu |
+| `0x001681E4` | `0x46000802` | cop1-fpu |
+| `0x001681E8` | `0xE48025D4` | fpu-memory |
+| `0x001681EC` | `0xD8A90000` | vu-memory |
+| `0x001681F0` | `0x44080800` | cop1-fpu |
+| `0x001681F4` | `0x48A85800` | cop2-vu0 |
+| `0x001681F8` | `0x4BEB4B18` | cop2-vu0 |
+| `0x001681FC` | `0xF86C0000` | vu-memory |
+| `0x0016FCB0` | `0x44826000` | cop1-fpu |
+| `0x0016FCBC` | `0x44826800` | cop1-fpu |
+| `0x00170440` | `0x44830000` | cop1-fpu |
+| `0x00170444` | `0xC4A10094` | fpu-memory |
+| `0x00170448` | `0x468000E0` | cop1-fpu |
+| `0x00170450` | `0xC4A000AC` | fpu-memory |
+| `0x00170454` | `0x46800860` | cop1-fpu |
+| `0x00170458` | `0x44831000` | cop1-fpu |
+| `0x00170460` | `0x46031019` | cop1-fpu |
 
 ## Indirect control transfers
 
@@ -105,7 +104,7 @@ _(96 more not shown)_
 
 ## Implications for the recompiler
 
-- **MMI + COP1** dominate the remaining gap. LQ/SQ are decoded and executed by the golden model as of T3.4, so the next vector extension is the MMI opcode space; the FPU is larger overall and equally needed before native code can run the game.
+- **COP1/FPU** now dominates the remaining gap (14,065 scalar words plus 7,231 FPU memory forms). LQ/SQ, COP0 and the MMI set used by the game are decoded and executed by the golden model as of T3.5, but the x64 emitter still needs SSE2 lowering for MMI/LQ/SQ.
 - **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need the same FPU state hand-off.
 - **64-bit integer forms** are translated as of T3.3: GPRs hold 64-bit values, 32-bit results sign-extend, and DADDU/DSUB/DADDIU, the DSLL/DSRL family and LD/SD/LWU all run natively. Only the unaligned LDL/LDR/SDL/SDR forms remain.
 - **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and will likely be stubbed behind an HLE boundary first.

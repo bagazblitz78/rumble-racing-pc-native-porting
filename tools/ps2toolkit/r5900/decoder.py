@@ -56,6 +56,47 @@ _BRANCHES = {
 }
 _LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall", "bgezall"}
 _BRANCH_LINKS = {"bltzal", "bgezal", "bltzall", "bgezall"}
+
+# MMI: opcode 0x1C, group selected by `funct`, operation by `sa` (bits 10:6).
+_MMI_GROUPS: dict[int, tuple[str | None, ...]] = {
+    0x08: (
+        "paddw", "psubw", "pcgtw", "pmaxw", "paddh", "psubh", "pcgth", "pmaxh",
+        "paddb", "psubb", "pcgtb", None, None, None, None, None,
+        "paddsw", "psubsw", "pextlw", "ppacw", "paddsh", "psubsh", "pextlh",
+        "ppach", "paddsb", "psubsb", "pextlb", "ppacb", None, None, "pext5",
+        "ppac5",
+    ),
+    0x28: (
+        None, "pabsw", "pceqw", "pminw", "padsbh", "pabsh", "pceqh", "pminh",
+        None, None, "pceqb", None, None, None, None, None,
+        "padduw", "psubuw", "pextuw", None, "padduh", "psubuh", "pextuh",
+        None, "paddub", "psubub", "pextub", "qfsrv", None, None, None, None,
+    ),
+    0x09: (
+        "pmaddw", None, "psllvw", "psrlvw", "pmsubw", None, None, None,
+        "pmfhi", "pmflo", "pinth", None, "pmultw", "pdivw", "pcpyld", None,
+        "pmaddh", "phmadh", "pand", "pxor", "pmsubh", "phmsbh", None, None,
+        None, None, "pexeh", "prevh", "pmulth", "pdivbw", "pexew", "prot3w",
+    ),
+    0x29: (
+        "pmadduw", None, None, "psravw", None, None, None, None,
+        "pmthi", "pmtlo", "pinteh", None, "pmultuw", "pdivuw", "pcpyud", None,
+        None, None, "por", "pnor", None, None, None, None,
+        None, None, "pexch", "pcpyh", None, None, "pexcw", None,
+    ),
+}
+_MMI_SINGLE = {
+    0x00: "madd", 0x01: "maddu", 0x04: "plzcw",
+    0x10: "mfhi1", 0x11: "mthi1", 0x12: "mflo1", 0x13: "mtlo1",
+    0x18: "mult1", 0x19: "multu1", 0x1A: "div1", 0x1B: "divu1",
+    0x31: "pmthl", 0x34: "psllh", 0x36: "psrlh", 0x37: "psrah",
+    0x3C: "psllw", 0x3E: "psrlw", 0x3F: "psraw",
+}
+_MMI_UNARY = {
+    "pabsw", "pabsh", "pext5", "ppac5", "pcpyh", "pexeh", "prevh",
+    "pexch", "pexew", "prot3w", "pexcw", "mfhi1", "mflo1", "mthi1",
+    "mtlo1", "pmthi", "pmtlo", "pmfhi", "pmflo",
+}
 _LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld", "lq"}
 _STORES = {"sb", "sh", "swl", "sw", "swr", "sd", "sq"}
 _JUMPS = {"j", "jal"}
@@ -122,6 +163,10 @@ class DecodedInsn:
     def disasm(self) -> str:
         m = self.mnemonic
         r = lambda n: f"${REG_NAMES[n]}"
+        if self.opcode == 0x1C and m != "unsupported":
+            if m in _MMI_UNARY:
+                return f"{m} {r(self.rd)}, {r(self.rt)}"
+            return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
         if m in ("sll", "srl", "sra"):
             return f"{m} {r(self.rd)}, {r(self.rt)}, {self.shamt}"
         if m in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
@@ -203,6 +248,14 @@ def decode(word: int, addr: int) -> DecodedInsn:
                                                                   "unsupported")
         else:
             mnemonic = "unsupported"
+        return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt, imm, uimm)
+
+    if opcode == 0x1C:  # MMI
+        group = _MMI_GROUPS.get(funct)
+        if group is not None:
+            mnemonic = group[shamt] or "unsupported"
+        else:
+            mnemonic = _MMI_SINGLE.get(funct, "unsupported")
         return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt, imm, uimm)
 
     if opcode in (0x02, 0x03):  # j / jal

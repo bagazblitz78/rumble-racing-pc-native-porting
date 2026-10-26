@@ -374,10 +374,10 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "",
         "## Implications for the recompiler",
         "",
-        "- **MMI + COP1** dominate the remaining gap. LQ/SQ are decoded and "
-        "executed by the golden model as of T3.4, so the next vector extension "
-        "is the MMI opcode space; the FPU is larger overall and equally needed "
-        "before native code can run the game.",
+        "- **COP1/FPU** now dominates the remaining gap (14,065 scalar words "
+        "plus 7,231 FPU memory forms). LQ/SQ, COP0 and the MMI set used by "
+        "the game are decoded and executed by the golden model as of T3.5, "
+        "but the x64 emitter still needs SSE2 lowering for MMI/LQ/SQ.",
         "- **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need "
         "the same FPU state hand-off.",
         "- **64-bit integer forms** are translated as of T3.3: GPRs hold "

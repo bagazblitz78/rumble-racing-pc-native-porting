@@ -21,7 +21,7 @@ def _program() -> bytes:
         a.addiu(a.V1, a.ZERO, 0x3C),      # PS2 SDK: number in $v1
         a.syscall(),                       # 0x3c is HLE-dispatched here
         a.addiu(a.S0, a.ZERO, 0x55),
-        0x70808E28,                        # first MMI word: stop here
+        0x44900000,                        # first COP1 word: stop here
     ]
     # pad code to 0x40 bytes so DATA_ADDR lands right after it
     words += [a.NOP] * (16 - len(words))
@@ -41,7 +41,7 @@ def test_trace_lq_sq_syscall_and_unsupported_stop():
                         syscall_returns={0x3C: 0x1234})
     report = result.report
     assert report["stop_reason"] == "unsupported"
-    assert report["detail"]["word"] == 0x70808E28
+    assert report["detail"]["word"] == 0x44900000
     assert report["detail"]["pc"] == CODE + 0x1C
     assert report["syscalls"] == {"0x3c": 1}
     assert result.memory.read(DATA_ADDR + 0x10, 16) == DATA
@@ -110,10 +110,11 @@ def test_real_boot_reaches_mmi():
         syscall_returns=lambda n, st, mem: st.regs[4] if n == 0x3C else 0,
     )
     report = result.report
-    # The CRT clears 0x1eef80..0x24b010 with SQ and runs its init calls
-    # before reaching the game's first MMI instruction.
-    assert report["steps"] > 100_000
+    # The CRT clears 0x1eef80..0x24b010 with SQ, runs its init calls, then
+    # reaches the game's first COP1 instruction (MTC1).
+    assert report["steps"] > 160_000
     assert report["stop_reason"] == "unsupported"
-    assert report["detail"]["pc"] == 0x00121630
-    assert report["detail"]["word"] == 0x70808E28
+    assert report["detail"]["pc"] == 0x00163FF8
+    assert report["detail"]["word"] == 0x44900000
     assert "0x3c" in report["syscalls"]
+    assert "0x3e" in report["syscalls"]

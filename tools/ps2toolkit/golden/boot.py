@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from ..elf.ps2elf import PS2ELF, PT_LOAD
+from ..r5900.decoder import decode
 from .interpreter import (
     EEMemory,
     EEState,
@@ -40,6 +41,7 @@ from .interpreter import (
 class TraceResult:
     report: dict
     memory: EEMemory
+    state: EEState
 
 
 def load_guest_image(elf: PS2ELF) -> EEMemory:
@@ -92,6 +94,7 @@ def trace_boot(
 
     steps = 0
     unique_pcs: set[int] = set()
+    recent_pcs: list[int] = []
     syscalls: dict[int, int] = {}
     syscall_log: list[dict] = []
     stop_reason = "step-limit"
@@ -102,6 +105,9 @@ def trace_boot(
             stop_reason = "pc-zero"
             break
         unique_pcs.add(st.pc)
+        recent_pcs.append(st.pc)
+        if len(recent_pcs) > 32:
+            del recent_pcs[0]
         try:
             steps += step(st, mem)
         except GuestSyscall as exc:
@@ -131,6 +137,13 @@ def trace_boot(
         except MemoryFault as exc:
             stop_reason = "memory-fault"
             detail = {"pc": st.pc, "message": str(exc)}
+            try:
+                insn = decode(mem.fetch32(st.pc), st.pc)
+                detail["mnemonic"] = insn.mnemonic
+                detail["disasm"] = insn.disasm()
+                detail["word"] = insn.raw
+            except (MemoryFault, ValueError):
+                pass
             break
         except GuestBreak as exc:
             stop_reason = "break"
@@ -150,10 +163,11 @@ def trace_boot(
         "mem_write_checksum": sum(mem.data) & 0xFFFFFFFF,
         "syscalls": {f"0x{code:02x}": n for code, n in sorted(syscalls.items())},
         "syscall_log": syscall_log,
+        "recent_pcs": recent_pcs,
         "hi": st.hi,
         "lo": st.lo,
     }
-    return TraceResult(report=report, memory=mem)
+    return TraceResult(report=report, memory=mem, state=st)
 
 
 def render_markdown(report: dict, source: str = "", elf_name: str = "") -> str:

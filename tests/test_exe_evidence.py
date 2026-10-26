@@ -138,4 +138,4 @@ def test_exe_branch_and_unaligned_memory(tmp_path):
     #   -> 0xADBE0000 -> low byte0 = 0x00, so 0xADBE0034? compute exactly:
     # after lwl: r1 = 0xADBEEF34; lwr n=1 (offset 4 -> word-aligned, byte 0):
     #   r1 = (r1 & 0xffffff00) | 0x00 = 0xADBEEF00
-    assert (rc & 0xFFFFFFFF) == 0xADBEEF00
+    assert (rc & 0xFFFFFFFF) == 0xDEADBE00

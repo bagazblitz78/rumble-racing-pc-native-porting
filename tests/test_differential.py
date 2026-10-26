@@ -1,7 +1,7 @@
 """Randomized differential testing (milestone M-B).
 
 Generates >=1000 random EE programs (ALU, shifts, mult/div incl. PS2 quirks,
-big-endian memory incl. unaligned LWL/LWR/SWL/SWR, forward branches with
+little-endian memory incl. unaligned LWL/LWR/SWL/SWR, forward branches with
 delay slots), compiles each to native x64, executes it natively, and
 requires bit-for-bit equality with the golden interpreter on every piece of
 architectural state (32 GPRs, HI, LO) plus the exit code.

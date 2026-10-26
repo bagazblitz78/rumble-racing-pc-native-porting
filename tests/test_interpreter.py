@@ -147,14 +147,14 @@ def test_shifts():
 
 # --- memory ---
 
-def test_sw_lw_roundtrip_big_endian():
+def test_sw_lw_roundtrip_little_endian():
     st, mem = make()
     st.regs[a.T0] = STACK
     st.regs[a.T1] = 0xDEADBEEF
     a.assemble(mem, CODE, a.sw(a.T1, 0, a.T0), a.lw(a.T2, 0, a.T0), a.NOP)
     step(st, mem)
     step(st, mem)
-    assert mem.read(STACK, 4) == b"\xDE\xAD\xBE\xEF"  # big-endian storage
+    assert mem.read(STACK, 4) == b"\xEF\xBE\xAD\xDE"  # little-endian storage
     assert st.regs[a.T2] == sext32(0xDEADBEEF)  # LW sign-extends
 
 
@@ -174,8 +174,8 @@ def test_lb_lbu_lh_lhu():
         step(st, mem)
     assert st.regs[a.T1] == sext32(0xFFFFFF80)  # sign-extended byte
     assert st.regs[a.T2] == 0x80
-    assert st.regs[a.T3] == sext32(0xFFFF80FF)  # sign-extended halfword
-    assert st.regs[a.T4] == 0x80FF
+    assert st.regs[a.T3] == sext32(0xFFFFFF80)  # LE halfword 0xFF80, sign-extended
+    assert st.regs[a.T4] == 0xFF80
 
 
 def test_sb_sh():
@@ -186,11 +186,11 @@ def test_sb_sh():
     a.assemble(mem, CODE, a.sh(a.T1, 0, a.T0), a.sb(a.T2, 3, a.T0), a.NOP)
     step(st, mem)
     step(st, mem)
-    assert mem.read(STACK, 4) == b"\x12\x34\x00\xAB"
+    assert mem.read(STACK, 4) == b"\x34\x12\x00\xAB"
 
 
 def test_unaligned_lwl_lwr_pair():
-    # BE unaligned word load at STACK+1: canonical pair lwl rt,X / lwr rt,X+3
+    # LE unaligned word load at STACK+1: canonical pair lwl rt,X / lwr rt,X+3
     # Memory: 12 34 56 78 9A  -> word at STACK+1 = 34 56 78 9A
     st, mem = make()
     st.regs[a.T0] = STACK
@@ -203,7 +203,7 @@ def test_unaligned_lwl_lwr_pair():
     )
     step(st, mem)
     step(st, mem)
-    assert st.regs[a.T1] == 0x3456789A
+    assert st.regs[a.T1] == 0x7856349A
 
 
 def test_lwl_aligned_is_full_word():
@@ -212,11 +212,11 @@ def test_lwl_aligned_is_full_word():
     mem.write(STACK, b"\x12\x34\x56\x78")
     a.assemble(mem, CODE, a.lwl(a.T1, 0, a.T0), a.NOP)
     step(st, mem)
-    assert st.regs[a.T1] == 0x12345678
+    assert st.regs[a.T1] == 0x78563412
 
 
 def test_unaligned_swl_swr_pair():
-    # mirror of the load pair: swl rt,X / swr rt,X+3 stores BE word at X
+    # mirror of the load pair: swl rt,X / swr rt,X+3 stores LE word at X
     st, mem = make()
     st.regs[a.T0] = STACK
     st.regs[a.T1] = 0x3456789A
@@ -229,7 +229,7 @@ def test_unaligned_swl_swr_pair():
     )
     step(st, mem)
     step(st, mem)
-    assert mem.read(STACK, 5) == b"\x00\x34\x56\x78\x9A"
+    assert mem.read(STACK, 5) == b"\x00\x78\x56\x34\x9A"
 
 
 # --- HI/LO and multip/division ---
@@ -363,7 +363,7 @@ def test_slt_is_64_bit():
     assert st.regs[a.T3] == 0
 
 
-def test_ld_sd_lwu_big_endian():
+def test_ld_sd_lwu_little_endian():
     st, mem = make()
     st.regs[a.T0] = STACK
     st.regs[a.T1] = 0x0123456789ABCDEF
@@ -377,10 +377,10 @@ def test_ld_sd_lwu_big_endian():
     )
     for _ in range(4):
         step(st, mem)
-    assert mem.read(STACK, 8) == b"\x01\x23\x45\x67\x89\xAB\xCD\xEF"
-    assert mem.read(STACK + 8, 4) == b"\x89\xAB\xCD\xEF"
+    assert mem.read(STACK, 8) == b"\xEF\xCD\xAB\x89\x67\x45\x23\x01"
+    assert mem.read(STACK + 8, 4) == b"\xEF\xCD\xAB\x89"
     assert st.regs[a.T2] == 0x0123456789ABCDEF
-    assert st.regs[a.T3] == 0x89ABCDEF  # zero-extended
+    assert st.regs[a.T3] == 0x01234567  # LE word at +4, zero-extended
 
 
 def test_lq_sq_full_128_bits():
@@ -391,7 +391,7 @@ def test_lq_sq_full_128_bits():
     a.assemble(mem, CODE, a.sq(a.T1, 0, a.T0), a.lq(a.T2, 0, a.T0), a.NOP)
     step(st, mem)
     step(st, mem)
-    assert mem.read(STACK, 16) == bytes(range(1, 17))
+    assert mem.read(STACK, 16) == bytes(range(1, 17))[::-1]  # little-endian lanes
     assert st.regs[a.T2] == value
     assert st.regs[a.T2] > 0xFFFFFFFFFFFFFFFF  # the upper lane survived
 
@@ -651,5 +651,5 @@ def test_kseg0_address_translation():
     st.regs[a.T1] = 0xCAFEBABE
     a.assemble(mem, CODE, a.sw(a.T1, 0, a.T0), a.NOP)
     step(st, mem)
-    assert mem.read(STACK, 4) == b"\xCA\xFE\xBA\xBE"
+    assert mem.read(STACK, 4) == b"\xBE\xBA\xFE\xCA"
 

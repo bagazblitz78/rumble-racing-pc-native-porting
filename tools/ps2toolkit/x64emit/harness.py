@@ -128,6 +128,10 @@ def compare_results(golden, native):
     g_regs = [r & 0xFFFFFFFFFFFFFFFF for r in g_regs]
     if g_regs != n_regs:
         raise AssertionError(f"regs diverge: {_fmt_diff('regs', g_regs, n_regs)}")
+    # HI/LO are 128-bit containers in the golden model (MMI uses HI1/LO1);
+    # the recompiler currently implements the scalar low 32 bits.
+    g_hi &= 0xFFFFFFFF
+    g_lo &= 0xFFFFFFFF
     if g_hi != n_hi:
         raise AssertionError(f"hi diverges: {_fmt_diff('int', g_hi, n_hi)}")
     if g_lo != n_lo:

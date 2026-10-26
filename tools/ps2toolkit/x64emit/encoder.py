@@ -187,7 +187,7 @@ class Asm:
         self.emit(_rex(r=dst, b=src16), 0x0F, 0xBF, _modrm(3, dst, src16))
 
     def xchg_al_ah(self):
-        """xchg al, ah (byte-order swap for big-endian halves)."""
+        """xchg al, ah (swap the two low bytes of AX; unused since LE data)."""
         self.emit(0x86, 0xC4)
 
     def mov_ri64(self, dst: int, imm: int):

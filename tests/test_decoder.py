@@ -212,9 +212,9 @@ def test_syscall_and_nop():
 def test_unsupported_reports_opcode():
     insn = d(enc_r(0, 8, 9, 10, 0, 52))  # (unused funct in subset)
     assert insn.mnemonic == "unsupported"
-    insn2 = d(enc_i(28, 8, 9, 0))  # MMI opcode family - not in MVP subset
+    insn2 = d(enc_r(0x1C, 0, 0, 0, 0, 0x30))  # PMFHL: MMI, not implemented
     assert insn2.mnemonic == "unsupported"
-    assert insn2.opcode == 28
+    assert insn2.opcode == 0x1C
 
 
 def test_slt_sltu():

@@ -117,7 +117,7 @@ def test_indirect_call_continues_caller():
 
 def test_unsupported_words_are_counted_by_category():
     report = scan([
-        0x70809E28,   # MMI (PADDW)
+        0x70000030,   # MMI (PMFHL, still unsupported)
         0x460062C6,   # COP1/FPU (MOV.S)
         0x68000000,   # LDL (64-bit unaligned load, still unsupported)
         a.jr(a.RA),

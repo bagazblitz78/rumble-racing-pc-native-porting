@@ -13,7 +13,7 @@ Generated-code calling convention (self-contained, closed world):
     only generated code is ever called).
 
 Semantics mirror tools/ps2toolkit/golden/interpreter.py exactly,
-including PS2 DIV quirks and big-endian LWL/LWR/SWL/SWR pair rules.
+including PS2 DIV quirks and little-endian LWL/LWR/SWL/SWR pair rules.
 """
 from __future__ import annotations
 
@@ -297,9 +297,7 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.mov_rr(RCX, RAX)
         asm.alu_ri("and", RCX, 0x1FFFFFFF)
         asm.ld16_ram(RDX, R14, RCX)
-        asm.movzx16(RAX, RDX)
-        asm.xchg_al_ah()
-        asm.movsx16(RAX, RAX)
+        asm.movsx16(RAX, RDX)
         _sto(asm, rt, RAX)
     elif m == "lhu":
         _slot(asm, RAX, rs)
@@ -308,22 +306,18 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.alu_ri("and", RCX, 0x1FFFFFFF)
         asm.ld16_ram(RDX, R14, RCX)
         asm.movzx16(RAX, RDX)
-        asm.xchg_al_ah()
         _sto(asm, rt, RAX)
     elif m == "lw":
         _addr32(asm, rs, insn.imm, RAX)
         asm.ld32_ram(RAX, R14, RCX)
-        asm.bswap(RAX)
         _sto(asm, rt, RAX)
     elif m == "lwu":
         _addr32(asm, rs, insn.imm, RAX)
         asm.ld32_ram(RAX, R14, RCX)
-        asm.bswap(RAX)
         _sto64(asm, rt, RAX)
     elif m == "ld":
         _addr32(asm, rs, insn.imm, RAX)
         asm.ld64_ram(RAX, R14, RCX)
-        asm.bswap64(RAX)
         _sto64(asm, rt, RAX)
     elif m == "sb":
         _slot(asm, RDX, rt)
@@ -331,105 +325,93 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.st8_ram(R14, RCX, RDX)
     elif m == "sh":
         _slot(asm, RAX, rt)
-        asm.xchg_al_ah()
         _addr32(asm, rs, insn.imm, RDX)
         asm.st16_ram(R14, RCX, RAX)
     elif m == "sw":
         _slot(asm, RDX, rt)
-        asm.bswap(RDX)  # guest memory is big-endian
         _addr32(asm, rs, insn.imm, RAX)
         asm.st32_ram(R14, RCX, RDX)
     elif m == "sd":
         _slot64(asm, RDX, rt)
-        asm.bswap64(RDX)
         _addr32(asm, rs, insn.imm, RAX)
         asm.st64_ram(R14, RCX, RDX)
     elif m == "lwl":
-        # rt <- ((W & (M32 >> s)) << s) | (rt & ~(M32 >> s)), s = 8*(addr&3)
+        # LE LWL: load W's high bytes into rt's high bytes, keep rt's low s bits
         asm.ld32(R8, R15, rt * 8)
         _addr32(asm, rs, insn.imm, RAX)
         asm.mov_rr(RDX, RCX)
         asm.alu_ri("and", RDX, 3)
-        asm.shift_ri("shl", RDX, 3)
-        asm.mov_rr(R9, RDX)  # s
+        asm.shift_ri("shl", RDX, 3)         # s = 8*(addr&3)
         asm.alu_ri("and", RCX, 0xFFFFFFFC)
-        asm.ld32_ram(RAX, R14, RCX)
-        asm.bswap(RAX)
-        asm.mov_rr(RCX, R9)  # cl = s
-        asm.mov_ri(RDX, 0xFFFFFFFF)
-        asm.shift_cl("shr", RDX)  # lowmask = M32 >> s
-        asm.alu_rr("and", RAX, RDX)
-        asm.shift_cl("shl", RAX)  # (W & lowmask) << s
-        asm.mov_ri(RDX, 0xFFFFFFFF)
-        asm.shift_cl("shl", RDX)
-        asm.not_r(RDX)  # keep = low s bits = ~(M32 << s)
-        asm.alu_rr("and", R8, RDX)
+        asm.ld32_ram(RAX, R14, RCX)         # W
+        asm.mov_rr(RCX, RDX)
+        asm.mov_ri(R9, 1)
+        asm.shift_cl("shl", R9)             # 1 << s
+        asm.alu_ri("sub", R9, 1)            # mask = low s bits
+        asm.mov_rr(RCX, R9)
+        asm.not_r(RCX)
+        asm.alu_rr("and", RAX, RCX)         # W & ~mask
+        asm.alu_rr("and", R8, R9)           # rt & mask
         asm.alu_rr("or", RAX, R8)
         _sto(asm, rt, RAX)
     elif m == "lwr":
-        # rt <- (rt - (rt & lowmask)) | (W >> t), t = 24 - 8*(addr&3)
+        # LE LWR: load W's low n bytes into rt's low bytes, keep rt's high bits
         asm.ld32(R8, R15, rt * 8)
         _addr32(asm, rs, insn.imm, RAX)
-        asm.mov_rr(RCX, RAX)
-        asm.alu_ri("and", RCX, 3)
-        asm.shift_ri("shl", RCX, 3)
-        asm.mov_ri(R9, 24)
-        asm.alu_rr("sub", R9, RCX)
-        asm.alu_ri("and", RAX, 0xFFFFFFFC)
-        asm.ld32_ram(RAX, R14, RAX)
-        asm.bswap(RAX)
+        asm.mov_rr(RDX, RCX)
+        asm.alu_ri("and", RDX, 3)
+        asm.shift_ri("shl", RDX, 3)         # s
+        asm.alu_ri("and", RCX, 0xFFFFFFFC)
+        asm.ld32_ram(RAX, R14, RCX)         # W
+        asm.mov_ri(RCX, 24)
+        asm.alu_rr("sub", RCX, RDX)         # 24 - s
+        asm.mov_ri(R9, M32)
+        asm.shift_cl("shr", R9)             # mask = (1 << 8n) - 1
         asm.mov_rr(RCX, R9)
-        asm.shift_cl("shr", RAX)
-        asm.mov_ri(RDX, 0xFFFFFFFF)
-        asm.shift_cl("shr", RDX)
-        asm.alu_rr("and", R8, RDX)
-        asm.ld32(RDX, R15, rt * 8)
-        asm.alu_rr("sub", RDX, R8)
-        asm.alu_rr("or", RAX, RDX)
+        asm.not_r(RCX)
+        asm.alu_rr("and", R8, RCX)          # rt & ~mask
+        asm.alu_rr("and", RAX, R9)          # W & mask
+        asm.alu_rr("or", RAX, R8)
         _sto(asm, rt, RAX)
     elif m == "swl":
-        # W' <- (W & ~(M32 >> s)) | (rt >> s)
+        # LE SWL: store rt's high bytes over W's high bytes at addr..word_end
+        asm.ld32(RDX, R15, rt * 8)
         _addr32(asm, rs, insn.imm, RAX)
-        asm.mov_rr(RCX, RAX)
-        asm.alu_ri("and", RCX, 3)
-        asm.shift_ri("shl", RCX, 3)
-        asm.alu_ri("and", RAX, 0xFFFFFFFC)
-        asm.mov_rr(R9, RAX)
-        asm.ld32_ram(RAX, R14, RAX)
-        asm.bswap(RAX)
-        asm.mov_ri(R8, 0xFFFFFFFF)
-        asm.shift_cl("shr", R8)
-        asm.not_r(R8)
-        asm.alu_rr("and", RAX, R8)
-        _slot(asm, RDX, rt)
-        asm.shift_cl("shr", RDX)
-        asm.alu_rr("or", RAX, RDX)
-        asm.bswap(RAX)
-        asm.st32_ram(R14, R9, RAX)
-    elif m == "swr":
-        # W' <- (W & ~(M32 << t)) | ((rt & (M32 >> t)) << t), t = 24 - 8*(addr&3)
-        _addr32(asm, rs, insn.imm, RAX)
-        asm.mov_rr(RCX, RAX)
-        asm.alu_ri("and", RCX, 3)
-        asm.shift_ri("shl", RCX, 3)
-        asm.alu_ri("and", RAX, 0xFFFFFFFC)
-        asm.mov_rr(R8, RAX)
-        asm.ld32_ram(RAX, R14, RAX)
-        asm.bswap(RAX)
-        asm.mov_ri(R9, 24)
-        asm.alu_rr("sub", R9, RCX)
+        asm.mov_rr(R8, RCX)
+        asm.alu_ri("and", R8, 0xFFFFFFFC)   # aligned word address
+        asm.mov_rr(R9, RCX)
+        asm.alu_ri("and", R9, 3)
+        asm.shift_ri("shl", R9, 3)          # s
+        asm.mov_rr(RCX, R9)                 # shift count = s
+        asm.mov_ri(R9, 1)
+        asm.shift_cl("shl", R9)             # 1 << s
+        asm.alu_ri("sub", R9, 1)            # low mask
+        asm.ld32_ram(RAX, R14, R8)          # W
+        asm.alu_rr("and", RAX, R9)          # W & mask
         asm.mov_rr(RCX, R9)
-        asm.mov_ri(R9, 0xFFFFFFFF)
-        asm.shift_cl("shr", R9)
-        _slot(asm, RDX, rt)
-        asm.alu_rr("and", RDX, R9)
-        asm.shift_cl("shl", RDX)
-        asm.mov_ri(R9, 0xFFFFFFFF)
-        asm.shift_cl("shl", R9)
-        asm.not_r(R9)
-        asm.alu_rr("and", RAX, R9)
+        asm.not_r(RCX)
+        asm.alu_rr("and", RDX, RCX)         # rt & ~mask
         asm.alu_rr("or", RAX, RDX)
-        asm.bswap(RAX)
+        asm.st32_ram(R14, R8, RAX)
+    elif m == "swr":
+        # LE SWR: store rt's low n bytes over W's low bytes at word_start..addr
+        asm.ld32(RDX, R15, rt * 8)
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.mov_rr(R8, RCX)
+        asm.alu_ri("and", R8, 0xFFFFFFFC)   # aligned word address
+        asm.mov_rr(R9, RCX)
+        asm.alu_ri("and", R9, 3)
+        asm.shift_ri("shl", R9, 3)          # s
+        asm.mov_ri(RCX, 24)
+        asm.alu_rr("sub", RCX, R9)          # 24 - s
+        asm.mov_ri(R9, M32)
+        asm.shift_cl("shr", R9)             # mask
+        asm.ld32_ram(RAX, R14, R8)          # W
+        asm.alu_rr("and", RDX, R9)          # rt & mask
+        asm.mov_rr(RCX, R9)
+        asm.not_r(RCX)
+        asm.alu_rr("and", RAX, RCX)         # W & ~mask
+        asm.alu_rr("or", RAX, RDX)
         asm.st32_ram(R14, R8, RAX)
     else:
         raise CodeGenError(f"unhandled instruction {m} at {insn.addr:#010x}")

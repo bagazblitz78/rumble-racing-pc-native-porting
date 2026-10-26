@@ -108,7 +108,7 @@ def test_jump_target_and_unsupported():
 
 
 def test_unsupported_instruction_reported():
-    mem = build((28 << 26) | (8 << 21) | (9 << 16))  # MMI opcode -> unsupported
+    mem = build((0x1C << 26) | 0x30)  # PMFHL: MMI, not implemented yet
     from ps2toolkit.golden.interpreter import UnsupportedInstruction
     with pytest.raises(UnsupportedInstruction):
         build_function(lambda addr: insn_at(mem, addr), entry=CODE,
