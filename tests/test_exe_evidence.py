@@ -91,6 +91,20 @@ def test_exe_jal_function_call(tmp_path):
     assert rc == 99
 
 
+def test_exe_mmi_and_quadword_memory(tmp_path):
+    # SQ/LQ move a full 128-bit GPR, PADDUB copies it (rt == 0), and the
+    # low byte of v0 becomes the process exit code.
+    rc = _run([
+        a.addiu(a.T0, a.ZERO, 0x2A),
+        a.sq(a.T0, 0, a.SP),
+        a.lq(a.T1, 0, a.SP),
+        a.paddub(a.V0, a.T1, a.ZERO),
+        a.jr(a.RA),
+        a.NOP,
+    ], tmp_path, "mmi42.exe")
+    assert rc == 42
+
+
 def test_exe_entry_not_at_code_start(tmp_path):
     # A callee placed below main is emitted first, so the guest entry sits at
     # a non-zero offset inside Program.code; the stub must call that address.

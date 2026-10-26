@@ -6,18 +6,18 @@ section contains x86-64 machine code translated from EE instructions, with
 no emulator anywhere in the execution path.
 
 Image layout (all runtime data in bss, zero-filled by the loader):
-  bss+0x000: ctx struct (regs[32], hi, lo, ram_ptr)   - 280 bytes
-  bss+0x120: guest RAM                                - 32 MiB
+  bss+0x000: ctx struct (128-bit regs[32], hi, lo, ram_ptr) - 552 bytes
+  bss+0x230: guest RAM                                     - 32 MiB
 
 The entry stub (in .text, before the guest code):
   sub  rsp, 0x28                 ; Win64 shadow + 16-byte alignment
   movabs rcx, ctx_va
   movabs rax, ram_va
-  mov  [rcx + 0x110], rax        ; ctx.ram_ptr = guest RAM
+  mov  [rcx + 0x220], rax        ; ctx.ram_ptr = guest RAM
   call guest_code                ; -> int run(void* ctx), returns in eax
   add  rsp, 0x28                 ; restore entry alignment for the tail jump
   movabs rcx, ctx_va
-  mov  ecx, [rcx + 0x10]         ; v0 = guest-computed exit code
+  mov  ecx, [rcx + 0x20]         ; v0 = guest-computed exit code
   jmp  [rip + IAT ExitProcess]
 """
 from __future__ import annotations
@@ -30,13 +30,13 @@ from .pe import Layout, build_console_exe
 
 RAM_SIZE = 32 * 1024 * 1024
 _STUB_LEN = 59
-_V0_SLOT = 0x10    # ctx.regs[2]
-_RAM_PTR_SLOT = 0x110
+_V0_SLOT = 0x20    # ctx.regs[2] (low 32 bits of a 16-byte slot)
+_RAM_PTR_SLOT = 544
 
 
 def _stub(layout: Layout, entry_offset: int = 0) -> bytes:
     ctx_va = layout.image_base + layout.bss_rva
-    ram_va = ctx_va + 0x120
+    ram_va = ctx_va + 0x230
     iat_va_rva = layout.iat_rva[("KERNEL32.DLL", "ExitProcess")]
     jmp_disp = iat_va_rva - (layout.text_rva + _STUB_LEN)
     call_disp = _STUB_LEN + entry_offset - 36  # call target = guest entry
@@ -61,7 +61,7 @@ def build_exe(program: Program, out_path: Path) -> Path:
 
     data = build_console_exe(
         build_text,
-        bss_size=0x120 + RAM_SIZE,
+        bss_size=0x230 + RAM_SIZE,
         imports=[("KERNEL32.DLL", "ExitProcess")],
         entry_text_offset=0,
     )

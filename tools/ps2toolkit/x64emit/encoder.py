@@ -263,6 +263,10 @@ class Asm:
     def imul64_rr(self, dst: int, src: int):
         self.emit(_rex(w=True, r=dst, b=src), 0x0F, 0xAF, _modrm(3, dst, src))
 
+    def bsr(self, dst: int, src: int):
+        """bsr dst, src (index of highest set bit; src must be non-zero)."""
+        self.emit(_rex(r=dst, b=src), 0x0F, 0xBD, _modrm(3, dst, src))
+
     def not_r(self, reg: int):
         self.emit(_rex(b=reg), 0xF7, _modrm(3, 2, reg))
 
@@ -304,6 +308,89 @@ class Asm:
         if reg >= 8:
             self.emit(0x41)
         self.emit(0x58 + (reg & 7))
+
+    # --- SSE2 (scratch registers xmm0-xmm3; all caller-saved) ---
+
+    def _xmm_rr(self, prefix: int, opcode: int, dst: int, src: int):
+        self.emit(prefix, _rex(r=dst, b=src), 0x0F, opcode,
+                  _modrm(3, dst, src))
+
+    def _xmm_rm(self, prefix: int, opcode: int, dst: int, base: int, disp: int):
+        self.emit(prefix, _rex(r=dst, b=base), 0x0F, opcode,
+                  _modrm(2, dst, base), struct.pack("<i", disp))
+
+    def _xmm_mr(self, prefix: int, opcode: int, base: int, disp: int, src: int):
+        self.emit(prefix, _rex(r=src, b=base), 0x0F, opcode,
+                  _modrm(2, src, base), struct.pack("<i", disp))
+
+    def movdqu_ld(self, dst: int, base: int, disp: int):
+        """movdqu xmm, m128."""
+        self._xmm_rm(0xF3, 0x6F, dst, base, disp)
+
+    def movdqu_st(self, base: int, disp: int, src: int):
+        """movdqu m128, xmm."""
+        self._xmm_mr(0xF3, 0x7F, base, disp, src)
+
+    def movdqu_ld_idx(self, dst: int, base: int, idx: int):
+        """movdqu xmm, [base + idx] (byte address in idx)."""
+        self.emit(0xF3, _rex(r=dst, x=idx, b=base), 0x0F, 0x6F,
+                  _modrm(0, dst, 4), _modrm(0, idx, base))
+
+    def movdqu_st_idx(self, base: int, idx: int, src: int):
+        """movdqu [base + idx], xmm."""
+        self.emit(0xF3, _rex(r=src, x=idx, b=base), 0x0F, 0x7F,
+                  _modrm(0, src, 4), _modrm(0, idx, base))
+
+    def paddb(self, dst, src): self._xmm_rr(0x66, 0xFC, dst, src)
+    def paddw(self, dst, src): self._xmm_rr(0x66, 0xFD, dst, src)
+    def paddd(self, dst, src): self._xmm_rr(0x66, 0xFE, dst, src)
+    def psubb(self, dst, src): self._xmm_rr(0x66, 0xF8, dst, src)
+    def psubw(self, dst, src): self._xmm_rr(0x66, 0xF9, dst, src)
+    def psubd(self, dst, src): self._xmm_rr(0x66, 0xFA, dst, src)
+    def paddusb(self, dst, src): self._xmm_rr(0x66, 0xDC, dst, src)
+    def paddusw(self, dst, src): self._xmm_rr(0x66, 0xDD, dst, src)
+    def psubusb(self, dst, src): self._xmm_rr(0x66, 0xD8, dst, src)
+    def psubusw(self, dst, src): self._xmm_rr(0x66, 0xD9, dst, src)
+    def paddsb(self, dst, src): self._xmm_rr(0x66, 0xEC, dst, src)
+    def paddsw(self, dst, src): self._xmm_rr(0x66, 0xED, dst, src)
+    def psubsb(self, dst, src): self._xmm_rr(0x66, 0xE8, dst, src)
+    def psubsw(self, dst, src): self._xmm_rr(0x66, 0xE9, dst, src)
+    def pcmpeqb(self, dst, src): self._xmm_rr(0x66, 0x74, dst, src)
+    def pcmpeqw(self, dst, src): self._xmm_rr(0x66, 0x75, dst, src)
+    def pcmpeqd(self, dst, src): self._xmm_rr(0x66, 0x76, dst, src)
+    def pcmpgtb(self, dst, src): self._xmm_rr(0x66, 0x64, dst, src)
+    def pcmpgtw(self, dst, src): self._xmm_rr(0x66, 0x65, dst, src)
+    def pcmpgtd(self, dst, src): self._xmm_rr(0x66, 0x66, dst, src)
+    def pmaxsw(self, dst, src): self._xmm_rr(0x66, 0xEE, dst, src)
+    def pminsw(self, dst, src): self._xmm_rr(0x66, 0xEA, dst, src)
+    def pand(self, dst, src): self._xmm_rr(0x66, 0xDB, dst, src)
+    def pandn(self, dst, src): self._xmm_rr(0x66, 0xDF, dst, src)
+    def por(self, dst, src): self._xmm_rr(0x66, 0xEB, dst, src)
+    def pxor(self, dst, src): self._xmm_rr(0x66, 0xEF, dst, src)
+    def punpcklbw(self, dst, src): self._xmm_rr(0x66, 0x60, dst, src)
+    def punpcklwd(self, dst, src): self._xmm_rr(0x66, 0x61, dst, src)
+    def punpckldq(self, dst, src): self._xmm_rr(0x66, 0x62, dst, src)
+    def punpckhbw(self, dst, src): self._xmm_rr(0x66, 0x68, dst, src)
+    def punpckhwd(self, dst, src): self._xmm_rr(0x66, 0x69, dst, src)
+    def punpckhdq(self, dst, src): self._xmm_rr(0x66, 0x6A, dst, src)
+    def punpcklqdq(self, dst, src): self._xmm_rr(0x66, 0x6C, dst, src)
+    def punpckhqdq(self, dst, src): self._xmm_rr(0x66, 0x6D, dst, src)
+
+    def pshuflw(self, dst, src, imm):
+        self.emit(0xF2, _rex(r=dst, b=src), 0x0F, 0x70,
+                  _modrm(3, dst, src), imm & 0xFF)
+
+    def pshufhw(self, dst, src, imm):
+        self.emit(0xF3, _rex(r=dst, b=src), 0x0F, 0x70,
+                  _modrm(3, dst, src), imm & 0xFF)
+
+    def pshufd(self, dst, src, imm):
+        self.emit(0x66, _rex(r=dst, b=src), 0x0F, 0x70,
+                  _modrm(3, dst, src), imm & 0xFF)
+
+    def pmovmskb(self, dst: int, src: int):
+        self.emit(0x66, _rex(r=dst, b=src), 0x0F, 0xD7,
+                  _modrm(3, dst, src))
 
     def int3(self):
         self.emit(0xCC)

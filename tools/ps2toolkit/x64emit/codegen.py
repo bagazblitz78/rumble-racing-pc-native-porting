@@ -2,15 +2,15 @@
 
 Generated-code calling convention (self-contained, closed world):
   - one native function `int run(void* ctx)` (Win64: ctx in rcx)
-  - ctx layout (offsets): regs[i] = i*8 (u64 slots, low 32 used), hi = 256,
-    lo = 264, guest_ram_ptr = 272
+  - ctx layout (offsets): regs[i] = i*16 (128-bit: low u64 at +0, high u64
+    at +8), hi = 512, lo = 528 (128-bit each), guest_ram_ptr = 544
   - r15 = ctx pointer, r14 = guest RAM base, r10 = branch-condition scratch;
-    rax/rcx/rdx/r8/r9 are general scratch
+    rax/rcx/rdx/r8/r9 are integer scratch, xmm0-xmm3 are SIMD scratch
   - returns -1 (0xFFFFFFFF) on normal completion, else the syscall code
-  - generated code never calls OS APIs directly; it never uses aligned
-    stack slots or SSE, so no ABI shadow-space dance is needed between
-    generated functions (documented deviation from Win64 ABI, safe because
-    only generated code is ever called).
+  - generated code never calls OS APIs directly. It uses unaligned SSE2
+    loads/stores and no stack slots, so no ABI shadow-space dance is needed
+    between generated functions (documented deviation from Win64 ABI; safe
+    because only generated code is ever called).
 
 Semantics mirror tools/ps2toolkit/golden/interpreter.py exactly,
 including PS2 DIV quirks and little-endian LWL/LWR/SWL/SWR pair rules.
@@ -35,9 +35,10 @@ from ..r5900.decoder import DecodedInsn
 from .encoder import R8, R9, R10, R14, R15, RAX, RCX, RDX, Asm, Label
 
 M32 = 0xFFFFFFFF
-HI_OFF = 256
-LO_OFF = 264
-RAM_OFF = 272
+HI_OFF = 512
+LO_OFF = 528
+RAM_OFF = 544
+REG_SIZE = 16
 EXIT_NORMAL = 0xFFFFFFFF  # -1
 
 _SHIFT = {"sll": "shl", "srl": "shr", "sra": "sar",
@@ -66,12 +67,19 @@ class Program:
 
 def _slot(asm: Asm, dst: int, reg: int):
     """ld32 dst <- low 32 bits of GPR[reg] (zero-extended)."""
-    asm.ld32(dst, R15, reg * 8)
+    asm.ld32(dst, R15, reg * 16)
 
 
 def _slot64(asm: Asm, dst: int, reg: int):
-    """ld64 dst <- GPR[reg]."""
-    asm.ld64_rm(dst, R15, reg * 8)
+    """ld64 dst <- low 64 bits of GPR[reg]."""
+    asm.ld64_rm(dst, R15, reg * 16)
+
+
+def _store_high_sign(asm: Asm, reg: int, src: int):
+    """Write the upper 64 bits as the sign extension of `src`'s bit 63."""
+    asm.mov_rr(RDX, src)
+    asm.shift_ri64("sar", RDX, 63)
+    asm.st64(R15, reg * 16 + 8, RDX)
 
 
 def _sto(asm: Asm, reg: int, src: int):
@@ -79,19 +87,30 @@ def _sto(asm: Asm, reg: int, src: int):
     if reg == 0:
         return
     asm.movsxd(src, src)
-    asm.st64(R15, reg * 8, src)
+    asm.st64(R15, reg * 16, src)
+    _store_high_sign(asm, reg, src)
 
 
 def _sto64(asm: Asm, reg: int, src: int):
-    """GPR[reg] <- full 64-bit src ($zero writes discarded)."""
+    """GPR[reg] <- sign-extended 64-bit src ($zero writes discarded)."""
     if reg == 0:
         return
-    asm.st64(R15, reg * 8, src)
+    asm.st64(R15, reg * 16, src)
+    _store_high_sign(asm, reg, src)
+
+
+def _xmm_slot(asm: Asm, xmm: int, reg: int):
+    asm.movdqu_ld(xmm, R15, reg * 16)
+
+
+def _xmm_store(asm: Asm, reg: int, xmm: int):
+    if reg != 0:
+        asm.movdqu_st(R15, reg * 16, xmm)
 
 
 def _addr32(asm: Asm, base_reg: int, imm: int, dst: int):
     """dst <- (GPR[base_reg] + imm) in RCX, masked to physical."""
-    asm.ld32(dst, R15, base_reg * 8)
+    asm.ld32(dst, R15, base_reg * 16)
     asm.alu_ri("add", dst, imm)
     asm.mov_rr(RCX, dst)
     asm.alu_ri("and", RCX, 0x1FFFFFFF)
@@ -115,11 +134,24 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _slot64(asm, RAX, rs)
         asm.alu_ri64("add", RAX, insn.imm)
         _sto64(asm, rt, RAX)
-    elif m in ("andi", "ori", "xori"):
-        op = {"andi": "and", "ori": "or", "xori": "xor"}[m]
+    elif m == "andi":
+        # 128-bit logical AND with a zero-extended immediate: upper = 0
         _slot64(asm, RAX, rs)
-        asm.alu_ri64(op, RAX, insn.uimm)
-        _sto64(asm, rt, RAX)
+        asm.alu_ri64("and", RAX, insn.uimm)
+        if rt:
+            asm.st64(R15, rt * 16, RAX)
+            asm.mov_ri(RDX, 0)
+            asm.st64(R15, rt * 16 + 8, RDX)
+    elif m in ("ori", "xori"):
+        # 128-bit logical OR/XOR: only the low 64 bits change, but the
+        # destination's upper half must come from rs (it is not preserved
+        # when rd != rs).
+        _slot64(asm, RAX, rs)
+        asm.alu_ri64("or" if m == "ori" else "xor", RAX, insn.uimm)
+        if rt:
+            asm.st64(R15, rt * 16, RAX)
+            asm.ld64_rm(RCX, R15, rs * 16 + 8)
+            asm.st64(R15, rt * 16 + 8, RCX)
     elif m == "lui":
         asm.mov_ri(RAX, (insn.uimm << 16) & M32)
         _sto(asm, rt, RAX)
@@ -164,27 +196,32 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.alu_rr64("add" if m in ("dadd", "daddu") else "sub", RAX, RCX)
         _sto64(asm, rd, RAX)
     elif m in ("and", "or", "xor"):
-        _slot64(asm, RAX, rs)
-        _slot64(asm, RCX, rt)
-        asm.alu_rr64(m, RAX, RCX)
-        _sto64(asm, rd, RAX)
+        _xmm_slot(asm, 0, rs)
+        _xmm_slot(asm, 1, rt)
+        {"and": asm.pand, "or": asm.por, "xor": asm.pxor}[m](0, 1)
+        _xmm_store(asm, rd, 0)
     elif m == "nor":
-        _slot64(asm, RAX, rs)
-        _slot64(asm, RCX, rt)
-        asm.alu_rr64("or", RAX, RCX)
-        asm.not_r64(RAX)
-        _sto64(asm, rd, RAX)
+        _xmm_slot(asm, 0, rs)
+        _xmm_slot(asm, 1, rt)
+        asm.por(0, 1)
+        asm.pcmpeqd(2, 2)
+        asm.pxor(0, 2)
+        _xmm_store(asm, rd, 0)
     elif m in ("movz", "movn"):
-        _slot64(asm, RAX, rs)
-        _slot64(asm, RCX, rt)
+        # 128-bit conditional move; the condition tests the whole register
+        _slot64(asm, RAX, rt)
+        asm.ld64_rm(RCX, R15, rt * 16 + 8)
+        asm.alu_rr64("or", RAX, RCX)
         skip = asm.new_label()
-        asm.test_rr64(RCX, RCX)
-        # movz stores when rt == 0; movn when rt != 0
+        asm.test_rr64(RAX, RAX)
         asm.jcc("ne" if m == "movz" else "e", skip)
-        _sto64(asm, rd, RAX)
+        _xmm_slot(asm, 0, rs)
+        _xmm_store(asm, rd, 0)
         asm.bind(skip)
     elif m in ("sync", "cache", "pref"):
         return  # no cache/coherence model in the single-threaded recompiler
+    elif insn.opcode == 0x1C:
+        emit_mmi(asm, insn)
     elif m in ("slt", "sltu"):
         _slot64(asm, RAX, rs)
         _slot64(asm, RCX, rt)
@@ -319,6 +356,14 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _addr32(asm, rs, insn.imm, RAX)
         asm.ld64_ram(RAX, R14, RCX)
         _sto64(asm, rt, RAX)
+    elif m == "lq":
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.movdqu_ld_idx(0, R14, RCX)
+        _xmm_store(asm, rt, 0)
+    elif m == "sq":
+        _xmm_slot(asm, 0, rt)
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.movdqu_st_idx(R14, RCX, 0)
     elif m == "sb":
         _slot(asm, RDX, rt)
         _addr32(asm, rs, insn.imm, RAX)
@@ -337,7 +382,7 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.st64_ram(R14, RCX, RDX)
     elif m == "lwl":
         # LE LWL: load W's high bytes into rt's high bytes, keep rt's low s bits
-        asm.ld32(R8, R15, rt * 8)
+        asm.ld32(R8, R15, rt * 16)
         _addr32(asm, rs, insn.imm, RAX)
         asm.mov_rr(RDX, RCX)
         asm.alu_ri("and", RDX, 3)
@@ -356,7 +401,7 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _sto(asm, rt, RAX)
     elif m == "lwr":
         # LE LWR: load W's low n bytes into rt's low bytes, keep rt's high bits
-        asm.ld32(R8, R15, rt * 8)
+        asm.ld32(R8, R15, rt * 16)
         _addr32(asm, rs, insn.imm, RAX)
         asm.mov_rr(RDX, RCX)
         asm.alu_ri("and", RDX, 3)
@@ -375,7 +420,7 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _sto(asm, rt, RAX)
     elif m == "swl":
         # LE SWL: store rt's high bytes over W's high bytes at addr..word_end
-        asm.ld32(RDX, R15, rt * 8)
+        asm.ld32(RDX, R15, rt * 16)
         _addr32(asm, rs, insn.imm, RAX)
         asm.mov_rr(R8, RCX)
         asm.alu_ri("and", R8, 0xFFFFFFFC)   # aligned word address
@@ -395,7 +440,7 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.st32_ram(R14, R8, RAX)
     elif m == "swr":
         # LE SWR: store rt's low n bytes over W's low bytes at word_start..addr
-        asm.ld32(RDX, R15, rt * 8)
+        asm.ld32(RDX, R15, rt * 16)
         _addr32(asm, rs, insn.imm, RAX)
         asm.mov_rr(R8, RCX)
         asm.alu_ri("and", R8, 0xFFFFFFFC)   # aligned word address
@@ -415,6 +460,130 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.st32_ram(R14, R8, RAX)
     else:
         raise CodeGenError(f"unhandled instruction {m} at {insn.addr:#010x}")
+
+
+_MMI_SSE = {
+    # wrapping add/sub
+    "paddb": "paddb", "paddh": "paddw", "paddw": "paddd",
+    "psubb": "psubb", "psubh": "psubw", "psubw": "psubd",
+    # signed/unsigned saturation
+    "paddsb": "paddsb", "paddsh": "paddsw",
+    "psubsb": "psubsb", "psubsh": "psubsw",
+    "paddub": "paddusb", "padduh": "paddusw",
+    "psubub": "psubusb", "psubuh": "psubusw",
+    # bitwise
+    "pand": "pand", "por": "por", "pxor": "pxor",
+    # compares / min / max
+    "pceqb": "pcmpeqb", "pceqh": "pcmpeqw", "pceqw": "pcmpeqd",
+    "pcgtb": "pcmpgtb", "pcgth": "pcmpgtw", "pcgtw": "pcmpgtd",
+    "pminh": "pminsw", "pmaxh": "pmaxsw",
+}
+_MMI_INTERLEAVE = {
+    "pextlw": ("punpckldq", 1, 0, 1),
+    "pextuw": ("punpckhdq", 1, 0, 1),
+    "pextlh": ("punpcklwd", 1, 0, 1),
+    "pextuh": ("punpckhwd", 1, 0, 1),
+    "pextlb": ("punpcklbw", 1, 0, 1),
+    "pextub": ("punpckhbw", 1, 0, 1),
+    "pcpyld": ("punpcklqdq", 1, 0, 1),
+    "pcpyud": ("punpckhqdq", 0, 1, 0),
+}
+_MMI_SHUFFLE = {
+    "pcpyh": ((0, 0), (0, 0)),
+    "pexeh": ((0xC6, 0xC6), None),
+    "prevh": ((0x1B, 0x1B), None),
+    "pexch": ((0xD8, 0xD8), None),
+    "pexew": (0xC6, None),
+    "prot3w": (0xC9, None),
+    "pexcw": (0xD8, None),
+}
+
+
+def emit_mmi(asm: Asm, insn: DecodedInsn):
+    """Lower one MMI instruction with SSE2 (128-bit GPR slots)."""
+    m = insn.mnemonic
+    rs, rt, rd = insn.rs, insn.rt, insn.rd
+
+    if m in _MMI_SSE:
+        _xmm_slot(asm, 0, rs)
+        _xmm_slot(asm, 1, rt)
+        getattr(asm, _MMI_SSE[m])(0, 1)
+        _xmm_store(asm, rd, 0)
+    elif m == "pnor":
+        _xmm_slot(asm, 0, rs)
+        _xmm_slot(asm, 1, rt)
+        asm.por(0, 1)
+        asm.pcmpeqd(2, 2)
+        asm.pxor(0, 2)
+        _xmm_store(asm, rd, 0)
+    elif m in _MMI_INTERLEAVE:
+        method, dst, src, out = _MMI_INTERLEAVE[m]
+        _xmm_slot(asm, 0, rs)
+        _xmm_slot(asm, 1, rt)
+        getattr(asm, method)(dst, src)
+        _xmm_store(asm, rd, out)
+    elif m in _MMI_SHUFFLE:
+        _xmm_slot(asm, 1, rt)
+        first, second = _MMI_SHUFFLE[m]
+        if isinstance(first, tuple):
+            asm.pshuflw(1, 1, first[0])
+            asm.pshufhw(1, 1, first[1])
+        else:
+            asm.pshufd(1, 1, first)
+        _xmm_store(asm, rd, 1)
+    elif m == "plzcw":
+        # count leading sign bits per low 32-bit lane, minus one
+        def lane(load):
+            load()
+            nonneg, zero, done = (asm.new_label() for _ in range(3))
+            asm.test_rr(RAX, RAX)
+            asm.jcc("ns", nonneg)
+            asm.not_r(RAX)
+            asm.bind(nonneg)
+            asm.test_rr(RAX, RAX)
+            asm.jcc("z", zero)
+            asm.bsr(RDX, RAX)
+            asm.mov_ri(RAX, 30)
+            asm.alu_rr("sub", RAX, RDX)
+            asm.jmp(done)
+            asm.bind(zero)
+            asm.mov_ri(RAX, 31)
+            asm.bind(done)
+
+        lane(lambda: _slot(asm, RAX, rs))
+        asm.mov_rr(R8, RAX)
+        lane(lambda: (_slot64(asm, RAX, rs), asm.shr64_ri(RAX, 32)))
+        asm.mov_rr(RDX, RAX)
+        asm.shl64_ri(RDX, 32)
+        asm.mov_rr(RAX, R8)
+        asm.alu_rr64("or", RAX, RDX)
+        if rd:
+            asm.st64(R15, rd * 16, RAX)
+            asm.mov_ri(RDX, 0)
+            asm.st64(R15, rd * 16 + 8, RDX)
+    elif m == "mult1":
+        _slot(asm, RAX, rs)
+        asm.movsxd(RAX, RAX)
+        _slot(asm, RCX, rt)
+        asm.movsxd(RCX, RCX)
+        asm.imul64_rr(RAX, RCX)
+        asm.mov_rr(RDX, RAX)
+        asm.movsxd(RDX, RDX)
+        asm.st64(R15, LO_OFF + 8, RDX)
+        asm.mov_rr(RDX, RAX)
+        asm.shift_ri64("sar", RDX, 32)
+        asm.movsxd(RDX, RDX)
+        asm.st64(R15, HI_OFF + 8, RDX)
+        _sto(asm, rd, RAX)
+    elif m in ("mfhi1", "mflo1"):
+        asm.ld64_rm(RAX, R15, (HI_OFF if m == "mfhi1" else LO_OFF) + 8)
+        _sto64(asm, rd, RAX)
+    elif m in ("mthi1", "mtlo1"):
+        _slot64(asm, RAX, rs)
+        asm.st64(R15, (HI_OFF if m == "mthi1" else LO_OFF) + 8, RAX)
+    else:
+        raise CodeGenError(
+            f"MMI instruction {m} not lowered to x64 yet at {insn.addr:#010x}")
 
 
 def emit_terminator(asm: Asm, block, labels: dict[int, Label],

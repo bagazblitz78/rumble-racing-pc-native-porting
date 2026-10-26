@@ -385,9 +385,9 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "unaligned LDL/LDR/SDL/SDR forms remain.",
         "- **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and "
         "will likely be stubbed behind an HLE boundary first.",
-        "- **Native codegen is now the gap, not decoding.** MMI, LQ/SQ and "
-        "COP1 run in the golden model but still need SSE2 lowering in "
-        "x64emit before the recompiler can execute the same code.",
+        "- **Native lowering** now covers MMI and LQ/SQ with SSE2; COP1/FPU "
+        "is the remaining scalar native gap, while VU0/COP2 is the remaining "
+        "decode gap.",
         "- **Indirect control transfers** shown above are jump tables and "
         "function pointers; static recompilation must resolve them (or fall "
         "back to a dispatch stub) before the whole image is reachable.",

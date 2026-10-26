@@ -4,8 +4,8 @@ golden interpreter (correctness oracle).
 Native side:
   - code bytes are copied into a PAGE_EXECUTE_READWRITE allocation
     (VirtualAlloc) and called as ``int run(void* ctx)`` (Win64: rcx = ctx).
-  - ctx layout matches codegen: regs[i] = i*8 (u64 slots, low 32 significant),
-    hi = 256, lo = 264, ram_ptr = 272.
+  - ctx layout matches codegen: regs[i] = i*16 (128-bit, low then high u64),
+    hi = 512, lo = 528 (128-bit each), ram_ptr = 544.
   - the guest RAM base (r14) points directly at the live bytearray buffer of
     an ``EEMemory``, so no 32MB copies are needed per run.
   - return value: -1 (0xFFFFFFFF) on normal completion, else the guest
@@ -49,10 +49,11 @@ _PAGE_EXECUTE_READWRITE = 0x40
 
 
 class Ctx(ctypes.Structure):
+    # GPRs are 128-bit: two u64 slots per register (low, high).
     _fields_ = [
-        ("regs", ctypes.c_uint64 * 32),
-        ("hi", ctypes.c_uint64),
-        ("lo", ctypes.c_uint64),
+        ("regs", ctypes.c_uint64 * 64),
+        ("hi", ctypes.c_uint64 * 2),
+        ("lo", ctypes.c_uint64 * 2),
         ("ram_ptr", ctypes.c_void_p),
     ]
 
@@ -74,14 +75,20 @@ def run_native(program: Program, guest_mem: EEMemory, initial: EEState):
         view = (ctypes.c_char * RAM_SIZE).from_buffer(guest_mem.data)
         ctx = Ctx()
         for i in range(32):
-            ctx.regs[i] = initial.regs[i]
-        ctx.hi = initial.hi
-        ctx.lo = initial.lo
+            ctx.regs[2 * i] = initial.regs[i] & 0xFFFFFFFFFFFFFFFF
+            ctx.regs[2 * i + 1] = (initial.regs[i] >> 64) & 0xFFFFFFFFFFFFFFFF
+        ctx.hi[0] = initial.hi & 0xFFFFFFFFFFFFFFFF
+        ctx.hi[1] = (initial.hi >> 64) & 0xFFFFFFFFFFFFFFFF
+        ctx.lo[0] = initial.lo & 0xFFFFFFFFFFFFFFFF
+        ctx.lo[1] = (initial.lo >> 64) & 0xFFFFFFFFFFFFFFFF
         ctx.ram_ptr = ctypes.addressof(view)
 
         ret = runner(ctypes.addressof(ctx))
-        return ([ctx.regs[i] & 0xFFFFFFFFFFFFFFFF for i in range(32)],
-                ctx.hi, ctx.lo, ret & 0xFFFFFFFF)
+        regs = [ctx.regs[2 * i] | (ctx.regs[2 * i + 1] << 64)
+                for i in range(32)]
+        hi = ctx.hi[0] | (ctx.hi[1] << 64)
+        lo = ctx.lo[0] | (ctx.lo[1] << 64)
+        return regs, hi, lo, ret & 0xFFFFFFFF
     finally:
         _KERNEL32.VirtualFree(addr, 0, _MEM_RELEASE)
 
@@ -112,7 +119,7 @@ def run_golden(guest_mem: EEMemory, initial: EEState, entry: int, stop: int,
 def _fmt_diff(kind: str, expected, got) -> str:
     if kind in ("regs",):
         diffs = [
-            f"r{i}: golden={a:#018x} native={b:#018x}"
+            f"r{i}: golden={a:#034x} native={b:#034x}"
             for i, (a, b) in enumerate(zip(expected, got)) if a != b
         ]
         return "; ".join(diffs)
@@ -123,15 +130,9 @@ def compare_results(golden, native):
     """Raise AssertionError describing any state divergence."""
     g_regs, g_hi, g_lo, g_code = golden
     n_regs, n_hi, n_lo, n_code = native
-    # The recompiler's context slots are 64-bit; MMI/LQ/SQ (upper 64 bits)
-    # are modelled by the golden interpreter only at this stage.
-    g_regs = [r & 0xFFFFFFFFFFFFFFFF for r in g_regs]
+
     if g_regs != n_regs:
         raise AssertionError(f"regs diverge: {_fmt_diff('regs', g_regs, n_regs)}")
-    # HI/LO are 128-bit containers in the golden model (MMI uses HI1/LO1);
-    # the recompiler currently implements the scalar low 32 bits.
-    g_hi &= 0xFFFFFFFF
-    g_lo &= 0xFFFFFFFF
     if g_hi != n_hi:
         raise AssertionError(f"hi diverges: {_fmt_diff('int', g_hi, n_hi)}")
     if g_lo != n_lo:

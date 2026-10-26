@@ -40,6 +40,15 @@ def sync():
     return enc_r(0, 0, 0, 0, 0, 15)
 
 
+def mmi(funct, sa, rd, rs, rt):
+    """Build an MMI word: opcode 0x1C, group in funct, operation in sa."""
+    return enc_r(0x1C, rs, rt, rd, sa, funct)
+
+
+def paddub(rd, rs, rt):
+    return mmi(0x28, 24, rd, rs, rt)
+
+
 def subu(rd, rs, rt):
     return enc_r(0, rs, rt, rd, 0, 35)
 
