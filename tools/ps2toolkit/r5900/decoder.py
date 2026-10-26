@@ -18,7 +18,8 @@ REG_NAMES = [
 
 _SPECIAL = {
     0x00: "sll", 0x02: "srl", 0x03: "sra", 0x04: "sllv", 0x06: "srlv", 0x07: "srav",
-    0x08: "jr", 0x09: "jalr", 0x0C: "syscall", 0x0D: "break",
+    0x08: "jr", 0x09: "jalr", 0x0A: "movz", 0x0B: "movn",
+    0x0C: "syscall", 0x0D: "break", 0x0F: "sync",
     0x10: "mfhi", 0x11: "mthi", 0x12: "mflo", 0x13: "mtlo",
     0x18: "mult", 0x19: "multu", 0x1A: "div", 0x1B: "divu",
     0x20: "add", 0x21: "addu", 0x22: "sub", 0x23: "subu",
@@ -26,18 +27,29 @@ _SPECIAL = {
     0x2A: "slt", 0x2B: "sltu",
 }
 
-_REGIMM = {0x00: "bltz", 0x01: "bgez"}
+_REGIMM = {
+    0x00: "bltz", 0x01: "bgez", 0x02: "bltzl", 0x03: "bgezl",
+    0x10: "bltzal", 0x11: "bgezal", 0x12: "bltzall", 0x13: "bgezall",
+}
 
 _OPCODE = {
     0x01: "regimm",
     0x02: "j", 0x03: "jal", 0x04: "beq", 0x05: "bne", 0x06: "blez", 0x07: "bgtz",
     0x08: "addi", 0x09: "addiu", 0x0A: "slti", 0x0B: "sltiu",
     0x0C: "andi", 0x0D: "ori", 0x0E: "xori", 0x0F: "lui",
+    0x14: "beql", 0x15: "bnel", 0x16: "blezl", 0x17: "bgtzl",
     0x20: "lb", 0x21: "lh", 0x22: "lwl", 0x23: "lw", 0x24: "lbu", 0x25: "lhu",
     0x26: "lwr", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw", 0x2E: "swr",
+    0x2F: "cache", 0x33: "pref",
 }
 
-_BRANCHES = {"beq", "bne", "blez", "bgtz", "bltz", "bgez"}
+_BRANCHES = {
+    "beq", "bne", "blez", "bgtz", "bltz", "bgez",
+    "beql", "bnel", "blezl", "bgtzl",
+    "bltzl", "bgezl", "bltzal", "bgezal", "bltzall", "bgezall",
+}
+_LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall", "bgezall"}
+_BRANCH_LINKS = {"bltzal", "bgezal", "bltzall", "bgezall"}
 _LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr"}
 _STORES = {"sb", "sh", "swl", "sw", "swr"}
 _JUMPS = {"j", "jal"}
@@ -80,6 +92,16 @@ class DecodedInsn:
         return self.mnemonic in _LINKERS
 
     @property
+    def is_likely(self) -> bool:
+        """Branch-likely: the delay slot is nullified when not taken."""
+        return self.mnemonic in _LIKELY
+
+    @property
+    def is_branch_link(self) -> bool:
+        """REGIMM branch-and-link (writes $ra when the branch is taken)."""
+        return self.mnemonic in _BRANCH_LINKS
+
+    @property
     def has_delay_slot(self) -> bool:
         return self.is_branch or self.is_jump or self.is_indirect_jump
 
@@ -106,9 +128,11 @@ class DecodedInsn:
             return f"{m} {r(self.rs)}"
         if m in ("mult", "multu", "div", "divu"):
             return f"{m} {r(self.rs)}, {r(self.rt)}"
-        if m in ("syscall", "break"):
+        if m in ("syscall", "break", "sync"):
             return m
         if m in ("addu", "add", "subu", "sub", "and", "or", "xor", "nor", "slt", "sltu"):
+            return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
+        if m in ("movz", "movn"):
             return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
         if m in ("addiu", "addi", "slti", "sltiu", "andi", "ori", "xori"):
             if m in ("andi", "ori", "xori"):
@@ -120,9 +144,12 @@ class DecodedInsn:
             return f"lui {r(self.rt)}, {hex(self.uimm)}"
         if m in _LOADS or m in _STORES:
             return f"{m} {r(self.rt)}, {self.imm}({r(self.rs)})"
-        if m in ("beq", "bne"):
+        if m in ("cache", "pref"):
+            return f"{m} {self.rt}, {self.imm}({r(self.rs)})"
+        if m in ("beq", "bne", "beql", "bnel"):
             return f"{m} {r(self.rs)}, {r(self.rt)}, 0x{self.addr + 4 + self.imm * 4:08X}"
-        if m in ("blez", "bgtz", "bltz", "bgez"):
+        if m in ("blez", "bgtz", "blezl", "bgtzl", "bltz", "bgez", "bltzl", "bgezl",
+                 "bltzal", "bgezal", "bltzall", "bgezall"):
             return f"{m} {r(self.rs)}, 0x{self.addr + 4 + self.imm * 4:08X}"
         if m in _JUMPS:
             return f"{m} 0x{self.target:08X}"

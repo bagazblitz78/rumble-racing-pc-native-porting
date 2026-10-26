@@ -148,6 +148,14 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
             st._set(rd, v >> sh)
         else:
             st._set(rd, s32(v) >> sh)
+    elif m == "movz":
+        if st._get(rt) == 0:
+            st._set(rd, st._get(rs))
+    elif m == "movn":
+        if st._get(rt) != 0:
+            st._set(rd, st._get(rs))
+    elif m in ("sync", "cache", "pref"):
+        return  # no caches / coherence model in the single-threaded golden core
     elif m in ("add", "addu"):
         st._set(rd, st._get(rs) + st._get(rt))
     elif m in ("sub", "subu"):
@@ -262,18 +270,19 @@ def _branch_target(st: EEState, insn: DecodedInsn) -> tuple[bool, int]:
     """Evaluate branch/jump condition with pre-delay-slot state."""
     m = insn.mnemonic
     rs, rt = insn.rs, insn.rt
-    if m == "beq":
-        return st._get(rs) == st._get(rt), insn.addr + 4 + insn.imm * 4
-    if m == "bne":
-        return st._get(rs) != st._get(rt), insn.addr + 4 + insn.imm * 4
-    if m == "blez":
-        return s32(st._get(rs)) <= 0, insn.addr + 4 + insn.imm * 4
-    if m == "bgtz":
-        return s32(st._get(rs)) > 0, insn.addr + 4 + insn.imm * 4
-    if m == "bltz":
-        return s32(st._get(rs)) < 0, insn.addr + 4 + insn.imm * 4
-    if m == "bgez":
-        return s32(st._get(rs)) >= 0, insn.addr + 4 + insn.imm * 4
+    target = insn.addr + 4 + insn.imm * 4
+    if m in ("beq", "beql"):
+        return st._get(rs) == st._get(rt), target
+    if m in ("bne", "bnel"):
+        return st._get(rs) != st._get(rt), target
+    if m in ("blez", "blezl"):
+        return s32(st._get(rs)) <= 0, target
+    if m in ("bgtz", "bgtzl"):
+        return s32(st._get(rs)) > 0, target
+    if m in ("bltz", "bltzl", "bltzal", "bltzall"):
+        return s32(st._get(rs)) < 0, target
+    if m in ("bgez", "bgezl", "bgezal", "bgezall"):
+        return s32(st._get(rs)) >= 0, target
     if m == "j":
         return True, insn.target
     if m == "jal":
@@ -302,6 +311,12 @@ def step(st: EEState, mem: EEMemory) -> int:
                 st._set(31, insn.addr + 8)
             else:  # jalr
                 st._set(insn.rd, insn.addr + 8)
+        elif insn.is_branch_link and taken:
+            st._set(31, insn.addr + 8)
+        if insn.is_likely and not taken:
+            # branch-likely: a not-taken branch nullifies its delay slot
+            st.pc = insn.addr + 8
+            return 1
         delay = decode(mem.read32(st.pc + 4), st.pc + 4)
         if delay.has_delay_slot:
             raise UnsupportedInstruction(

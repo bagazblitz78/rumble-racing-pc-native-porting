@@ -4,60 +4,56 @@
 - **Boot ELF**: `SLUS_201.74;1`
 - **Entry**: `0x00100008`
 - **Executable words**: 244,704
-- **Reachable words (recursive descent)**: 155,235
-- **Decoded by MVP front-end**: 106,933 (68.88%)
-- **Unsupported words**: 48,302
+- **Reachable words (recursive descent)**: 155,613
+- **Decoded by MVP front-end**: 108,112 (69.47%)
+- **Unsupported words**: 47,501
 - **Indirect control transfers**: 116
 
 ## Executable segments
 
 | Base | Words | Reachable | Unreachable |
 |---|---|---|---|
-| `0x00100000` | 244,704 | 155,235 | 89,469 |
+| `0x00100000` | 244,704 | 155,613 | 89,091 |
 
 ## Unsupported categories
 
 | Category | Words |
 |---|---|
-| mmi | 15,805 |
-| cop1-fpu | 14,000 |
+| mmi | 15,809 |
+| cop1-fpu | 14,065 |
 | fpu-memory | 7,231 |
-| 64-bit-memory | 3,717 |
+| 64-bit-memory | 3,734 |
 | vu-memory | 1,937 |
-| 64-bit-shift | 1,856 |
+| 64-bit-shift | 1,866 |
 | cop2-vu0 | 1,454 |
-| 64-bit-alu | 1,134 |
-| other | 832 |
-| conditional-move | 152 |
+| 64-bit-alu | 1,151 |
+| other | 175 |
 | cop0 | 79 |
-| sync | 49 |
-| regimm | 42 |
-| cache-pref | 14 |
 
-## Top mnemonics (of 56)
+## Top mnemonics (of 67)
 
 | Mnemonic | Words |
 |---|---|
-| `unsupported` | 48,302 |
-| `addiu` | 20,253 |
-| `lw` | 12,138 |
-| `nop` | 11,005 |
-| `lui` | 7,599 |
-| `beq` | 7,422 |
-| `sw` | 7,180 |
+| `unsupported` | 47,501 |
+| `addiu` | 20,291 |
+| `lw` | 12,163 |
+| `nop` | 11,016 |
+| `lui` | 7,635 |
+| `beq` | 7,444 |
+| `sw` | 7,195 |
 | `jal` | 6,234 |
-| `addu` | 5,627 |
-| `sll` | 4,235 |
-| `bne` | 3,299 |
-| `ori` | 2,746 |
+| `addu` | 5,632 |
+| `sll` | 4,239 |
+| `bne` | 3,317 |
+| `ori` | 2,761 |
 | `lbu` | 2,673 |
-| `sb` | 2,666 |
-| `or` | 1,730 |
-| `andi` | 1,636 |
-| `jr` | 1,572 |
-| `slti` | 1,071 |
-| `subu` | 829 |
-| `lb` | 815 |
+| `sb` | 2,673 |
+| `or` | 1,734 |
+| `andi` | 1,640 |
+| `jr` | 1,589 |
+| `slti` | 1,073 |
+| `subu` | 832 |
+| `lb` | 816 |
 
 ## Unsupported samples
 
@@ -117,5 +113,5 @@ _(96 more not shown)_
 - **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need the same FPU state hand-off.
 - **64-bit integer forms** (DADDU/DSUB/DADDI/LD/SD and the DSLL/DSRL family) require 64-bit GPR semantics; the current MVP stores 32-bit values, so this is an architectural change, not a decoder table entry.
 - **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and will likely be stubbed behind an HLE boundary first.
-- **Cheap wins** before the big blocks: MOVZ/MOVN, SYNC, CACHE/PREF (no-ops), and the REGIMM branch forms (BLTZAL/BGEZAL/BLTZL/BGEZL).
+- **Cheap wins already landed** (T3.2): MOVZ/MOVN, SYNC, CACHE/PREF and the branch-likely / REGIMM branch-and-link forms. The residual 'other' bucket is small enough to inspect case by case.
 - **Indirect control transfers** shown above are jump tables and function pointers; static recompilation must resolve them (or fall back to a dispatch stub) before the whole image is reachable.

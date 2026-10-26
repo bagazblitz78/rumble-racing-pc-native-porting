@@ -28,6 +28,18 @@ def addu(rd, rs, rt):
     return enc_r(0, rs, rt, rd, 0, 33)
 
 
+def movz(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 10)
+
+
+def movn(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 11)
+
+
+def sync():
+    return enc_r(0, 0, 0, 0, 0, 15)
+
+
 def subu(rd, rs, rt):
     return enc_r(0, rs, rt, rd, 0, 35)
 
@@ -148,6 +160,50 @@ def bgez(rs, off):
     return enc_i(1, rs, 1, off)
 
 
+def beql(rs, rt, off):
+    return enc_i(20, rs, rt, off)
+
+
+def bnel(rs, rt, off):
+    return enc_i(21, rs, rt, off)
+
+
+def blezl(rs, off):
+    return enc_i(22, rs, 0, off)
+
+
+def bgtzl(rs, off):
+    return enc_i(23, rs, 0, off)
+
+
+def _regimm(rs, rt_field, off):
+    return enc_i(1, rs, rt_field, off)
+
+
+def bltzl(rs, off):
+    return _regimm(rs, 2, off)
+
+
+def bgezl(rs, off):
+    return _regimm(rs, 3, off)
+
+
+def bltzal(rs, off):
+    return _regimm(rs, 16, off)
+
+
+def bgezal(rs, off):
+    return _regimm(rs, 17, off)
+
+
+def bltzall(rs, off):
+    return _regimm(rs, 18, off)
+
+
+def bgezall(rs, off):
+    return _regimm(rs, 19, off)
+
+
 def lb(rt, off, base):
     return enc_i(32, base, rt, off)
 
@@ -194,6 +250,14 @@ def sw(rt, off, base):
 
 def swr(rt, off, base):
     return enc_i(46, base, rt, off)
+
+
+def cache(op, off, base):
+    return enc_i(47, base, op, off)
+
+
+def pref(op, off, base):
+    return enc_i(51, base, op, off)
 
 
 def mfhi(rd):

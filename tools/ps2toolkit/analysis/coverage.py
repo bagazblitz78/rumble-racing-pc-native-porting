@@ -384,8 +384,9 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "values, so this is an architectural change, not a decoder table entry.",
         "- **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and "
         "will likely be stubbed behind an HLE boundary first.",
-        "- **Cheap wins** before the big blocks: MOVZ/MOVN, SYNC, CACHE/PREF "
-        "(no-ops), and the REGIMM branch forms (BLTZAL/BGEZAL/BLTZL/BGEZL).",
+        "- **Cheap wins already landed** (T3.2): MOVZ/MOVN, SYNC, CACHE/PREF "
+        "and the branch-likely / REGIMM branch-and-link forms. The residual "
+        "'other' bucket is small enough to inspect case by case.",
         "- **Indirect control transfers** shown above are jump tables and "
         "function pointers; static recompilation must resolve them (or fall "
         "back to a dispatch stub) before the whole image is reachable.",

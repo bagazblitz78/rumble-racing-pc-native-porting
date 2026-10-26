@@ -42,7 +42,12 @@ EXIT_NORMAL = 0xFFFFFFFF  # -1
 
 _SHIFT = {"sll": "shl", "srl": "shr", "sra": "sar",
           "sllv": "shl", "srlv": "shr", "srav": "sar"}
-_BRANCH_CC = {"blez": "le", "bgtz": "g", "bltz": "l", "bgez": "ge"}
+_BRANCH_CC = {
+    "blez": "le", "blezl": "le",
+    "bgtz": "g", "bgtzl": "g",
+    "bltz": "l", "bltzl": "l", "bltzal": "l", "bltzall": "l",
+    "bgez": "ge", "bgezl": "ge", "bgezal": "ge", "bgezall": "ge",
+}
 
 
 class CodeGenError(Exception):
@@ -134,6 +139,17 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.alu_rr("or", RAX, RCX)
         asm.not_r(RAX)
         _sto(asm, rd, RAX)
+    elif m in ("movz", "movn"):
+        _slot(asm, RAX, rs)
+        _slot(asm, RCX, rt)
+        skip = asm.new_label()
+        asm.test_rr(RCX, RCX)
+        # movz stores when rt == 0; movn when rt != 0
+        asm.jcc("ne" if m == "movz" else "e", skip)
+        _sto(asm, rd, RAX)
+        asm.bind(skip)
+    elif m in ("sync", "cache", "pref"):
+        return  # no cache/coherence model in the single-threaded recompiler
     elif m in ("slt", "sltu"):
         _slot(asm, RAX, rs)
         _slot(asm, RCX, rt)
@@ -375,21 +391,50 @@ def emit_terminator(asm: Asm, block, labels: dict[int, Label],
     if isinstance(term, BranchTerm):
         insn = term.insn
         m = insn.mnemonic
-        if m in ("beq", "bne"):
+        if m in ("beq", "bne", "beql", "bnel"):
             _slot(asm, RAX, insn.rs)
             _slot(asm, RCX, insn.rt)
             asm.alu_rr("cmp", RAX, RCX)
-            cc = "e" if m == "beq" else "ne"
+            cc = "e" if m in ("beq", "beql") else "ne"
         else:
             _slot(asm, RAX, insn.rs)
             asm.alu_ri("cmp", RAX, 0)
             cc = _BRANCH_CC[m]
         asm.setcc(cc, R10)
         asm.movzx(R10, R10)
-        emit_insn(asm, term.delay)
-        asm.test_rr(R10, R10)
-        asm.jcc("ne", _label(labels, term.target, asm))
-        asm.jmp(_label(labels, term.fallthrough, asm))
+        lik = term.insn.is_likely
+        link = term.insn.is_branch_link
+        if lik or link:
+            # A branch-likely nullifies its delay slot when not taken, and a
+            # REGIMM branch-and-link writes $ra only when taken: both need
+            # the condition tested before the delay slot is emitted.
+            skip = asm.new_label()
+            if lik:
+                asm.test_rr(R10, R10)
+                asm.jcc("e", skip)
+            if link:
+                if not lik:
+                    no_link = asm.new_label()
+                    asm.test_rr(R10, R10)
+                    asm.jcc("e", no_link)
+                asm.mov_ri(RAX, (term.insn.addr + 8) & M32)
+                _sto(asm, 31, RAX)
+                if not lik:
+                    asm.bind(no_link)
+            emit_insn(asm, term.delay)
+            if lik:
+                asm.jmp(_label(labels, term.target, asm))
+                asm.bind(skip)
+                asm.jmp(_label(labels, term.fallthrough, asm))
+            else:
+                asm.test_rr(R10, R10)  # the delay slot may clobber flags
+                asm.jcc("ne", _label(labels, term.target, asm))
+                asm.jmp(_label(labels, term.fallthrough, asm))
+        else:
+            emit_insn(asm, term.delay)
+            asm.test_rr(R10, R10)
+            asm.jcc("ne", _label(labels, term.target, asm))
+            asm.jmp(_label(labels, term.fallthrough, asm))
     elif isinstance(term, JumpTerm):
         emit_insn(asm, term.delay)
         asm.jmp(_label(labels, term.target, asm))

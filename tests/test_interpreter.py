@@ -393,6 +393,114 @@ def test_memory_fault_on_oob():
         step(st, mem)
 
 
+# --- conditional move / hints ---
+
+def test_movz_movn():
+    st, mem = make()
+    st.regs[a.T0] = 0x1234          # value
+    st.regs[a.T1] = 0               # condition
+    st.regs[a.T2] = 0xFFFF          # previous dest
+    a.assemble(mem, CODE, a.movz(a.T2, a.T0, a.T1), a.NOP)
+    step(st, mem)
+    assert st.regs[a.T2] == 0x1234  # rt == 0 -> move
+
+    st, mem = make()
+    st.regs[a.T0] = 0x1234
+    st.regs[a.T1] = 1
+    st.regs[a.T2] = 0xFFFF
+    a.assemble(mem, CODE, a.movz(a.T2, a.T0, a.T1), a.NOP)
+    step(st, mem)
+    assert st.regs[a.T2] == 0xFFFF
+
+    st, mem = make()
+    st.regs[a.T0] = 0x1234
+    st.regs[a.T1] = 7
+    st.regs[a.T2] = 0xFFFF
+    a.assemble(mem, CODE, a.movn(a.T2, a.T0, a.T1), a.NOP)
+    step(st, mem)
+    assert st.regs[a.T2] == 0x1234  # rt != 0 -> move
+
+
+def test_sync_cache_pref_are_noops():
+    st, mem = make()
+    a.assemble(
+        mem, CODE,
+        a.sync(),
+        a.cache(3, 16, a.SP),
+        a.pref(2, 32, a.SP),
+        a.NOP,
+    )
+    for expected_pc in (CODE + 4, CODE + 8, CODE + 12):
+        step(st, mem)
+        assert st.pc == expected_pc
+    assert st.regs[a.SP] == 0  # hint opcodes do not read or write registers
+
+
+# --- branch-likely / branch-and-link ---
+
+def test_branch_likely_taken_executes_delay_slot():
+    st, mem = make()
+    a.assemble(
+        mem, CODE,
+        a.beql(a.T0, a.T0, 2),       # taken -> CODE+12
+        a.addiu(a.T1, a.ZERO, 11),   # delay: executes
+        a.addiu(a.T2, a.ZERO, 99),   # skipped
+        a.addiu(a.T3, a.ZERO, 22),   # target
+    )
+    step(st, mem)
+    assert st.pc == CODE + 12
+    assert st.regs[a.T1] == 11
+    assert st.regs[a.T2] == 0
+
+
+def test_branch_likely_not_taken_nullifies_delay_slot():
+    st, mem = make()
+    st.regs[a.T0] = 1
+    st.regs[a.T1] = 2
+    a.assemble(
+        mem, CODE,
+        a.beql(a.T0, a.T1, 4),       # 1 != 2 -> not taken -> CODE+8
+        a.addiu(a.T2, a.ZERO, 11),   # delay: nullified
+        a.addiu(a.T3, a.ZERO, 22),   # fallthrough
+    )
+    steps = step(st, mem)
+    assert steps == 1
+    assert st.pc == CODE + 8
+    assert st.regs[a.T2] == 0
+    step(st, mem)
+    assert st.regs[a.T3] == 22
+
+
+def test_branch_and_link_writes_ra_only_when_taken():
+    st, mem = make()
+    st.regs[a.T0] = 5
+    a.assemble(
+        mem, CODE,
+        a.bgezal(a.T0, 2),           # taken -> CODE+12; ra = CODE+8
+        a.addiu(a.T1, a.ZERO, 1),    # delay
+        a.addiu(a.T2, a.ZERO, 99),   # skipped
+        a.addiu(a.T3, a.ZERO, 2),    # target
+    )
+    step(st, mem)
+    assert st.pc == CODE + 12
+    assert st.regs[a.RA] == CODE + 8
+    assert st.regs[a.T1] == 1
+    assert st.regs[a.T2] == 0
+
+    st, mem = make()
+    st.regs[a.T0] = setu32(-1)       # bgezal not taken: link is not written
+    st.regs[a.RA] = 0xABCD
+    a.assemble(
+        mem, CODE,
+        a.bgezal(a.T0, 4),
+        a.NOP,
+        a.NOP,
+    )
+    step(st, mem)
+    assert st.pc == CODE + 8
+    assert st.regs[a.RA] == 0xABCD
+
+
 def test_kseg0_address_translation():
     st, mem = make()
     st.regs[a.T0] = 0xA0000000 | STACK  # uncached kseg1 mirror

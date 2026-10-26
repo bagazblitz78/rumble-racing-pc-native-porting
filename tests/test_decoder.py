@@ -83,6 +83,37 @@ def test_branches():
     assert bgez.mnemonic == "bgez"
 
 
+def test_branch_likely_and_link_forms():
+    beql = d(enc_i(20, 8, 9, 3))
+    assert beql.mnemonic == "beql" and beql.is_branch and beql.is_likely
+    bnel = d(enc_i(21, 8, 9, 3))
+    assert bnel.mnemonic == "bnel" and bnel.is_likely
+    assert d(enc_i(22, 8, 0, 3)).mnemonic == "blezl"
+    assert d(enc_i(23, 8, 0, 3)).mnemonic == "bgtzl"
+    bgezal = d((1 << 26) | (8 << 21) | (17 << 16) | 3)
+    assert bgezal.mnemonic == "bgezal"
+    assert bgezal.is_branch_link and bgezal.is_branch
+    assert d((1 << 26) | (8 << 21) | (2 << 16) | 3).mnemonic == "bltzl"
+    assert d((1 << 26) | (8 << 21) | (18 << 16) | 3).mnemonic == "bltzall"
+
+
+def test_movz_movn_sync():
+    movz = d(enc_r(0, 8, 9, 10, 0, 10))
+    assert movz.mnemonic == "movz"
+    assert (movz.rs, movz.rt, movz.rd) == (8, 9, 10)
+    assert d(enc_r(0, 8, 9, 10, 0, 11)).mnemonic == "movn"
+    assert d(enc_r(0, 0, 0, 0, 0, 15)).mnemonic == "sync"
+
+
+def test_cache_and_pref():
+    cache = d(enc_i(47, 8, 3, 4))
+    assert cache.mnemonic == "cache"
+    assert (cache.rs, cache.rt, cache.imm) == (8, 3, 4)
+    pref = d(enc_i(51, 8, 2, 4))
+    assert pref.mnemonic == "pref"
+    assert (pref.rs, pref.rt) == (8, 2)
+
+
 def test_jal_target():
     insn = d(enc_j(3, 0x00108000))
     assert insn.mnemonic == "jal"
