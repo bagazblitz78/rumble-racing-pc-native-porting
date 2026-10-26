@@ -41,7 +41,10 @@ RAM_OFF = 272
 EXIT_NORMAL = 0xFFFFFFFF  # -1
 
 _SHIFT = {"sll": "shl", "srl": "shr", "sra": "sar",
-          "sllv": "shl", "srlv": "shr", "srav": "sar"}
+          "sllv": "shl", "srlv": "shr", "srav": "sar",
+          "dsll": "shl", "dsrl": "shr", "dsra": "sar",
+          "dsll32": "shl", "dsrl32": "shr", "dsra32": "sar",
+          "dsllv": "shl", "dsrlv": "shr", "dsrav": "sar"}
 _BRANCH_CC = {
     "blez": "le", "blezl": "le",
     "bgtz": "g", "bgtzl": "g",
@@ -62,15 +65,28 @@ class Program:
 
 
 def _slot(asm: Asm, dst: int, reg: int):
-    """ld32 dst <- GPR[reg]."""
+    """ld32 dst <- low 32 bits of GPR[reg] (zero-extended)."""
     asm.ld32(dst, R15, reg * 8)
 
 
+def _slot64(asm: Asm, dst: int, reg: int):
+    """ld64 dst <- GPR[reg]."""
+    asm.ld64_rm(dst, R15, reg * 8)
+
+
 def _sto(asm: Asm, reg: int, src: int):
-    """GPR[reg] <- src ($zero writes discarded, as the interpreter does)."""
+    """GPR[reg] <- sign-extended 32-bit src ($zero writes discarded)."""
     if reg == 0:
         return
-    asm.st32(R15, reg * 8, src)
+    asm.movsxd(src, src)
+    asm.st64(R15, reg * 8, src)
+
+
+def _sto64(asm: Asm, reg: int, src: int):
+    """GPR[reg] <- full 64-bit src ($zero writes discarded)."""
+    if reg == 0:
+        return
+    asm.st64(R15, reg * 8, src)
 
 
 def _addr32(asm: Asm, base_reg: int, imm: int, dst: int):
@@ -95,17 +111,21 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
             _slot(asm, RAX, rs)
             asm.alu_ri("add", RAX, insn.imm)
         _sto(asm, rt, RAX)
+    elif m in ("daddiu", "daddi"):
+        _slot64(asm, RAX, rs)
+        asm.alu_ri64("add", RAX, insn.imm)
+        _sto64(asm, rt, RAX)
     elif m in ("andi", "ori", "xori"):
         op = {"andi": "and", "ori": "or", "xori": "xor"}[m]
-        _slot(asm, RAX, rs)
-        asm.alu_ri(op, RAX, insn.uimm)
-        _sto(asm, rt, RAX)
+        _slot64(asm, RAX, rs)
+        asm.alu_ri64(op, RAX, insn.uimm)
+        _sto64(asm, rt, RAX)
     elif m == "lui":
         asm.mov_ri(RAX, (insn.uimm << 16) & M32)
         _sto(asm, rt, RAX)
     elif m in ("slti", "sltiu"):
-        _slot(asm, RAX, rs)
-        asm.alu_ri("cmp", RAX, insn.imm if m == "slti" else insn.imm & M32)
+        _slot64(asm, RAX, rs)
+        asm.alu_ri64("cmp", RAX, insn.imm)
         asm.setcc("l" if m == "slti" else "b", RDX)
         asm.movzx(RDX, RDX)
         _sto(asm, rt, RDX)
@@ -118,6 +138,16 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _slot(asm, RCX, rs)
         asm.shift_cl(_SHIFT[m], RAX)
         _sto(asm, rd, RAX)
+    elif m in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
+        amount = insn.shamt + (32 if m.endswith("32") else 0)
+        _slot64(asm, RAX, rt)
+        asm.shift_ri64(_SHIFT[m], RAX, amount)
+        _sto64(asm, rd, RAX)
+    elif m in ("dsllv", "dsrlv", "dsrav"):
+        _slot64(asm, RAX, rt)
+        _slot(asm, RCX, rs)  # x86 masks the count to 6 bits, like MIPS64
+        asm.shift_cl64(_SHIFT[m], RAX)
+        _sto64(asm, rd, RAX)
     elif m in ("add", "addu"):
         _slot(asm, RAX, rs)
         _slot(asm, RCX, rt)
@@ -128,32 +158,37 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         _slot(asm, RCX, rt)
         asm.alu_rr("sub", RAX, RCX)
         _sto(asm, rd, RAX)
+    elif m in ("dadd", "daddu", "dsub", "dsubu"):
+        _slot64(asm, RAX, rs)
+        _slot64(asm, RCX, rt)
+        asm.alu_rr64("add" if m in ("dadd", "daddu") else "sub", RAX, RCX)
+        _sto64(asm, rd, RAX)
     elif m in ("and", "or", "xor"):
-        _slot(asm, RAX, rs)
-        _slot(asm, RCX, rt)
-        asm.alu_rr(m, RAX, RCX)
-        _sto(asm, rd, RAX)
+        _slot64(asm, RAX, rs)
+        _slot64(asm, RCX, rt)
+        asm.alu_rr64(m, RAX, RCX)
+        _sto64(asm, rd, RAX)
     elif m == "nor":
-        _slot(asm, RAX, rs)
-        _slot(asm, RCX, rt)
-        asm.alu_rr("or", RAX, RCX)
-        asm.not_r(RAX)
-        _sto(asm, rd, RAX)
+        _slot64(asm, RAX, rs)
+        _slot64(asm, RCX, rt)
+        asm.alu_rr64("or", RAX, RCX)
+        asm.not_r64(RAX)
+        _sto64(asm, rd, RAX)
     elif m in ("movz", "movn"):
-        _slot(asm, RAX, rs)
-        _slot(asm, RCX, rt)
+        _slot64(asm, RAX, rs)
+        _slot64(asm, RCX, rt)
         skip = asm.new_label()
-        asm.test_rr(RCX, RCX)
+        asm.test_rr64(RCX, RCX)
         # movz stores when rt == 0; movn when rt != 0
         asm.jcc("ne" if m == "movz" else "e", skip)
-        _sto(asm, rd, RAX)
+        _sto64(asm, rd, RAX)
         asm.bind(skip)
     elif m in ("sync", "cache", "pref"):
         return  # no cache/coherence model in the single-threaded recompiler
     elif m in ("slt", "sltu"):
-        _slot(asm, RAX, rs)
-        _slot(asm, RCX, rt)
-        asm.alu_rr("cmp", RAX, RCX)
+        _slot64(asm, RAX, rs)
+        _slot64(asm, RCX, rt)
+        asm.alu_rr64("cmp", RAX, RCX)
         asm.setcc("l" if m == "slt" else "b", RDX)
         asm.movzx(RDX, RDX)
         _sto(asm, rd, RDX)
@@ -280,6 +315,16 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.ld32_ram(RAX, R14, RCX)
         asm.bswap(RAX)
         _sto(asm, rt, RAX)
+    elif m == "lwu":
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.ld32_ram(RAX, R14, RCX)
+        asm.bswap(RAX)
+        _sto64(asm, rt, RAX)
+    elif m == "ld":
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.ld64_ram(RAX, R14, RCX)
+        asm.bswap64(RAX)
+        _sto64(asm, rt, RAX)
     elif m == "sb":
         _slot(asm, RDX, rt)
         _addr32(asm, rs, insn.imm, RAX)
@@ -294,6 +339,11 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         asm.bswap(RDX)  # guest memory is big-endian
         _addr32(asm, rs, insn.imm, RAX)
         asm.st32_ram(R14, RCX, RDX)
+    elif m == "sd":
+        _slot64(asm, RDX, rt)
+        asm.bswap64(RDX)
+        _addr32(asm, rs, insn.imm, RAX)
+        asm.st64_ram(R14, RCX, RDX)
     elif m == "lwl":
         # rt <- ((W & (M32 >> s)) << s) | (rt & ~(M32 >> s)), s = 8*(addr&3)
         asm.ld32(R8, R15, rt * 8)
@@ -392,13 +442,13 @@ def emit_terminator(asm: Asm, block, labels: dict[int, Label],
         insn = term.insn
         m = insn.mnemonic
         if m in ("beq", "bne", "beql", "bnel"):
-            _slot(asm, RAX, insn.rs)
-            _slot(asm, RCX, insn.rt)
-            asm.alu_rr("cmp", RAX, RCX)
+            _slot64(asm, RAX, insn.rs)
+            _slot64(asm, RCX, insn.rt)
+            asm.alu_rr64("cmp", RAX, RCX)
             cc = "e" if m in ("beq", "beql") else "ne"
         else:
-            _slot(asm, RAX, insn.rs)
-            asm.alu_ri("cmp", RAX, 0)
+            _slot64(asm, RAX, insn.rs)
+            asm.alu_ri64("cmp", RAX, 0)
             cc = _BRANCH_CC[m]
         asm.setcc(cc, R10)
         asm.movzx(R10, R10)

@@ -132,6 +132,11 @@ class Asm:
         """mov dword ptr [base + disp32], r32."""
         self.emit(_rex(r=src, b=base), 0x89, _modrm(2, src, base), struct.pack("<i", disp))
 
+    def st64(self, base: int, disp: int, src: int):
+        """mov qword ptr [base + disp32], r64."""
+        self.emit(_rex(w=True, r=src, b=base), 0x89, _modrm(2, src, base),
+                  struct.pack("<i", disp))
+
     def ld32_ram(self, dst: int, base: int, idx: int):
         """mov r32, dword ptr [base + idx] (byte address in idx)."""
         self.emit(_rex(r=dst, x=idx, b=base), 0x8B, _modrm(0, dst, 4), _modrm(0, idx, base))
@@ -139,6 +144,16 @@ class Asm:
     def st32_ram(self, base: int, idx: int, src: int):
         """mov dword ptr [base + idx], r32."""
         self.emit(_rex(r=src, x=idx, b=base), 0x89, _modrm(0, src, 4), _modrm(0, idx, base))
+
+    def ld64_ram(self, dst: int, base: int, idx: int):
+        """mov r64, qword ptr [base + idx] (byte address in idx)."""
+        self.emit(_rex(w=True, r=dst, x=idx, b=base), 0x8B, _modrm(0, dst, 4),
+                  _modrm(0, idx, base))
+
+    def st64_ram(self, base: int, idx: int, src: int):
+        """mov qword ptr [base + idx], r64."""
+        self.emit(_rex(w=True, r=src, x=idx, b=base), 0x89, _modrm(0, src, 4),
+                  _modrm(0, idx, base))
 
     def ld64_rm(self, dst: int, base: int, disp: int = 0):
         """mov r64, qword ptr [base + disp32]."""
@@ -199,16 +214,32 @@ class Asm:
         """op r/m32, r32 (dst := dst op src)."""
         self.emit(_rex(r=src, b=dst), _ALU_OP[op], _modrm(3, src, dst))
 
+    def alu_rr64(self, op: str, dst: int, src: int):
+        """op r/m64, r64 (dst := dst op src)."""
+        self.emit(_rex(w=True, r=src, b=dst), _ALU_OP[op], _modrm(3, src, dst))
+
     def alu_ri(self, op: str, dst: int, imm: int):
         """op r/m32, imm32."""
         self.emit(_rex(b=dst), 0x81, _modrm(3, _ALU_EXT[op], dst),
                   struct.pack("<i", imm if imm < 0x80000000 else imm - 0x100000000))
 
+    def alu_ri64(self, op: str, dst: int, imm: int):
+        """op r/m64, imm32 (sign-extended immediate)."""
+        self.emit(_rex(w=True, b=dst), 0x81, _modrm(3, _ALU_EXT[op], dst),
+                  struct.pack("<i", imm if imm < 0x80000000 else imm - 0x100000000))
+
     def shift_ri(self, op: str, dst: int, amount: int):
         self.emit(_rex(b=dst), 0xC1, _modrm(3, _SHIFT_EXT[op], dst), amount & 0x1F)
 
+    def shift_ri64(self, op: str, dst: int, amount: int):
+        self.emit(_rex(w=True, b=dst), 0xC1, _modrm(3, _SHIFT_EXT[op], dst),
+                  amount & 0x3F)
+
     def shift_cl(self, op: str, dst: int):
         self.emit(_rex(b=dst), 0xD3, _modrm(3, _SHIFT_EXT[op], dst))
+
+    def shift_cl64(self, op: str, dst: int):
+        self.emit(_rex(w=True, b=dst), 0xD3, _modrm(3, _SHIFT_EXT[op], dst))
 
     def setcc(self, cc: str, dst: int):
         """setcc r8."""
@@ -217,8 +248,14 @@ class Asm:
     def test_rr(self, a: int, b: int):
         self.emit(_rex(r=b, b=a), 0x85, _modrm(3, b, a))
 
+    def test_rr64(self, a: int, b: int):
+        self.emit(_rex(w=True, r=b, b=a), 0x85, _modrm(3, b, a))
+
     def bswap(self, reg: int):
         self.emit(_rex(b=reg), 0x0F, 0xC8 + (reg & 7))
+
+    def bswap64(self, reg: int):
+        self.emit(_rex(w=True, b=reg), 0x0F, 0xC8 + (reg & 7))
 
     def imul_rr(self, dst: int, src: int):
         self.emit(_rex(r=dst, b=src), 0x0F, 0xAF, _modrm(3, dst, src))
@@ -228,6 +265,9 @@ class Asm:
 
     def not_r(self, reg: int):
         self.emit(_rex(b=reg), 0xF7, _modrm(3, 2, reg))
+
+    def not_r64(self, reg: int):
+        self.emit(_rex(w=True, b=reg), 0xF7, _modrm(3, 2, reg))
 
     def shl64_cl(self, reg: int):
         self.emit(_rex(w=True, b=reg), 0xD3, _modrm(3, 4, reg))

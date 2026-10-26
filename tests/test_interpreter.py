@@ -11,6 +11,7 @@ from ps2toolkit.golden.interpreter import (
     GuestSyscall,
     MemoryFault,
     run,
+    sext32,
     step,
 )
 
@@ -73,7 +74,8 @@ def test_lui_ori_builds_constant():
     a.assemble(mem, CODE, a.lui(a.T0, 0xABCD), a.ori(a.T0, a.T0, 0x1234), a.NOP)
     step(st, mem)
     step(st, mem)
-    assert st.regs[a.T0] == 0xABCD1234
+    # LUI sign-extends, and ORI is a 64-bit logical op on MIPS64/R5900
+    assert st.regs[a.T0] == sext32(0xABCD1234)
 
 
 def test_addu_subu():
@@ -84,7 +86,7 @@ def test_addu_subu():
     step(st, mem)
     step(st, mem)
     assert st.regs[a.T2] == 1
-    assert st.regs[a.T3] == 0xFFFFFFFF  # 1 - 2 wraps
+    assert st.regs[a.T3] == sext32(-1)  # 1 - 2 wraps, sign-extended
 
 
 def test_logic_ops():
@@ -104,12 +106,12 @@ def test_logic_ops():
     assert st.regs[a.T2] == 0x00F000F0
     assert st.regs[a.T3] == 0xFFF0FFF0
     assert st.regs[a.T4] == 0xFF00FF00
-    assert st.regs[a.T5] == 0x000F000F
+    assert st.regs[a.T5] == 0xFFFFFFFF000F000F  # 64-bit NOR
 
 
 def test_slt_sltu():
     st, mem = make()
-    st.regs[a.T0] = 0xFFFFFFFF  # -1 signed
+    st.regs[a.T0] = sext32(-1)  # -1 signed
     st.regs[a.T1] = 1
     a.assemble(mem, CODE, a.slt(a.T2, a.T0, a.T1), a.sltu(a.T3, a.T0, a.T1), a.NOP)
     step(st, mem)
@@ -136,10 +138,10 @@ def test_shifts():
         step(st, mem)
     assert st.regs[a.T2] == 0x00000000
     assert st.regs[a.T3] == 0x00000008
-    assert st.regs[a.T4] == 0xFFFFFFF8  # -8 after arithmetic shift of 0x80000000
+    assert st.regs[a.T4] == sext32(-8)  # arithmetic shift of 0x80000000
     assert st.regs[a.T5] == 0
     assert st.regs[a.T6] == 0x08000000
-    assert st.regs[a.T7] == 0xF8000000  # arithmetic shift of 0x80000000 by 4
+    assert st.regs[a.T7] == sext32(0xF8000000)  # arithmetic shift by 4
 
 
 # --- memory ---
@@ -152,7 +154,7 @@ def test_sw_lw_roundtrip_big_endian():
     step(st, mem)
     step(st, mem)
     assert mem.read(STACK, 4) == b"\xDE\xAD\xBE\xEF"  # big-endian storage
-    assert st.regs[a.T2] == 0xDEADBEEF
+    assert st.regs[a.T2] == sext32(0xDEADBEEF)  # LW sign-extends
 
 
 def test_lb_lbu_lh_lhu():
@@ -169,9 +171,9 @@ def test_lb_lbu_lh_lhu():
     )
     for _ in range(4):
         step(st, mem)
-    assert st.regs[a.T1] == 0xFFFFFF80  # sign-extended byte
+    assert st.regs[a.T1] == sext32(0xFFFFFF80)  # sign-extended byte
     assert st.regs[a.T2] == 0x80
-    assert st.regs[a.T3] == 0xFFFF80FF  # sign-extended halfword
+    assert st.regs[a.T3] == sext32(0xFFFF80FF)  # sign-extended halfword
     assert st.regs[a.T4] == 0x80FF
 
 
@@ -239,8 +241,8 @@ def test_mult_signed():
     step(st, mem)
     step(st, mem)
     step(st, mem)
-    assert st.regs[a.T2] == setu32(-6)
-    assert st.regs[a.T3] == 0xFFFFFFFF  # sign-extended upper half
+    assert st.regs[a.T2] == sext32(-6)
+    assert st.regs[a.T3] == sext32(-1)  # sign-extended upper half
 
 
 def test_multu():
@@ -250,7 +252,7 @@ def test_multu():
     a.assemble(mem, CODE, a.multu(a.T0, a.T1), a.mflo(a.T2), a.mfhi(a.T3), a.NOP)
     for _ in range(3):
         step(st, mem)
-    assert st.regs[a.T2] == 0xFFFFFFFE
+    assert st.regs[a.T2] == sext32(0xFFFFFFFE)
     assert st.regs[a.T3] == 0x00000001
 
 
@@ -261,8 +263,8 @@ def test_div_signed():
     a.assemble(mem, CODE, a.div(a.T0, a.T1), a.mflo(a.T2), a.mfhi(a.T3), a.NOP)
     for _ in range(3):
         step(st, mem)
-    assert st.regs[a.T2] == setu32(-3)  # truncation toward zero
-    assert st.regs[a.T3] == setu32(-1)
+    assert st.regs[a.T2] == sext32(-3)  # truncation toward zero
+    assert st.regs[a.T3] == sext32(-1)
 
 
 def test_div_by_zero_ps2_semantics():
@@ -272,8 +274,8 @@ def test_div_by_zero_ps2_semantics():
     a.assemble(mem, CODE, a.div(a.T0, a.T1), a.mflo(a.T2), a.mfhi(a.T3), a.NOP)
     for _ in range(3):
         step(st, mem)
-    assert st.regs[a.T2] == 0x80000000  # LO = 0x80000000 for negative dividend
-    assert st.regs[a.T3] == setu32(-5)  # HI = dividend
+    assert st.regs[a.T2] == sext32(0x80000000)  # LO for negative dividend
+    assert st.regs[a.T3] == sext32(-5)  # HI = dividend
 
 
 def test_mthi_mtlo():
@@ -285,6 +287,99 @@ def test_mthi_mtlo():
         step(st, mem)
     assert st.regs[a.T2] == 222
     assert st.regs[a.T3] == 111
+
+
+# --- 64-bit integer semantics ---
+
+def test_daddu_dsubu_full_width():
+    st, mem = make()
+    st.regs[a.T0] = 0xFFFFFFFF00000001
+    st.regs[a.T1] = 0x0000000200000004
+    a.assemble(
+        mem, CODE,
+        a.daddu(a.T2, a.T0, a.T1),
+        a.dsubu(a.T3, a.T2, a.T1),
+        a.NOP,
+    )
+    step(st, mem)
+    step(st, mem)
+    assert st.regs[a.T2] == 0x0000000100000005  # 64-bit wrap
+    assert st.regs[a.T3] == 0xFFFFFFFF00000001
+
+
+def test_daddiu_sign_extends_immediate():
+    st, mem = make()
+    st.regs[a.T0] = 0x8000000000000000
+    a.assemble(mem, CODE, a.daddiu(a.T1, a.T0, -1),
+               a.daddiu(a.T2, a.ZERO, -1), a.NOP)
+    step(st, mem)
+    step(st, mem)
+    assert st.regs[a.T1] == 0x7FFFFFFFFFFFFFFF  # wraps at 64 bits
+    assert st.regs[a.T2] == 0xFFFFFFFFFFFFFFFF
+
+
+def test_64_bit_shifts():
+    st, mem = make()
+    st.regs[a.T0] = 0x8000000000000001
+    a.assemble(
+        mem, CODE,
+        a.dsll(a.T1, a.T0, 4),
+        a.dsrl(a.T2, a.T0, 4),
+        a.dsra(a.T3, a.T0, 4),
+        a.dsll32(a.T4, a.T0, 1),    # shift by 33
+        a.dsrl32(a.T5, a.T0, 1),
+        a.dsra32(a.T6, a.T0, 1),
+        a.NOP,
+    )
+    for _ in range(6):
+        step(st, mem)
+    assert st.regs[a.T1] == 0x0000000000000010
+    assert st.regs[a.T2] == 0x0800000000000000
+    assert st.regs[a.T3] == 0xF800000000000000
+    assert st.regs[a.T4] == 0x0000000200000000  # bit 63 shifted out, bit 0 -> 33
+    assert st.regs[a.T5] == 0x0000000040000000  # bit 63 -> bit 30
+    assert st.regs[a.T6] == 0xFFFFFFFFC0000000  # arithmetic: -2^30
+
+
+def test_64_bit_variable_shifts_use_low_six_bits():
+    st, mem = make()
+    st.regs[a.T0] = 1
+    st.regs[a.T1] = 65             # 65 & 0x3F == 1
+    a.assemble(mem, CODE, a.dsllv(a.T2, a.T0, a.T1), a.NOP)
+    step(st, mem)
+    assert st.regs[a.T2] == 2
+
+
+def test_slt_is_64_bit():
+    st, mem = make()
+    st.regs[a.T0] = 0xFFFFFFFFFFFFFFFF  # -1 in 64-bit
+    st.regs[a.T1] = 1
+    a.assemble(mem, CODE, a.slt(a.T2, a.T0, a.T1),
+               a.sltu(a.T3, a.T0, a.T1), a.NOP)
+    step(st, mem)
+    step(st, mem)
+    assert st.regs[a.T2] == 1
+    assert st.regs[a.T3] == 0
+
+
+def test_ld_sd_lwu_big_endian():
+    st, mem = make()
+    st.regs[a.T0] = STACK
+    st.regs[a.T1] = 0x0123456789ABCDEF
+    a.assemble(
+        mem, CODE,
+        a.sd(a.T1, 0, a.T0),
+        a.ld(a.T2, 0, a.T0),
+        a.lwu(a.T3, 4, a.T0),
+        a.sw(a.T1, 8, a.T0),        # SW stores the low 32 bits only
+        a.NOP,
+    )
+    for _ in range(4):
+        step(st, mem)
+    assert mem.read(STACK, 8) == b"\x01\x23\x45\x67\x89\xAB\xCD\xEF"
+    assert mem.read(STACK + 8, 4) == b"\x89\xAB\xCD\xEF"
+    assert st.regs[a.T2] == 0x0123456789ABCDEF
+    assert st.regs[a.T3] == 0x89ABCDEF  # zero-extended
 
 
 # --- control flow ---
@@ -488,7 +583,7 @@ def test_branch_and_link_writes_ra_only_when_taken():
     assert st.regs[a.T2] == 0
 
     st, mem = make()
-    st.regs[a.T0] = setu32(-1)       # bgezal not taken: link is not written
+    st.regs[a.T0] = sext32(-1)       # bgezal not taken: link is not written
     st.regs[a.RA] = 0xABCD
     a.assemble(
         mem, CODE,

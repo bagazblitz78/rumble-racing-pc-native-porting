@@ -119,16 +119,16 @@ def test_unsupported_words_are_counted_by_category():
     report = scan([
         0x70809E28,   # MMI (PADDW)
         0x460062C6,   # COP1/FPU (MOV.S)
-        0x0000002D,   # SPECIAL DADDU
+        0x68000000,   # LDL (64-bit unaligned load, still unsupported)
         a.jr(a.RA),
         a.NOP,
     ])
     assert report["unsupported_words"] == 3
     assert report["unsupported_categories"] == {
-        "mmi": 1, "cop1-fpu": 1, "64-bit-alu": 1,
+        "mmi": 1, "cop1-fpu": 1, "64-bit-memory": 1,
     }
     assert {s["category"] for s in report["unsupported_samples"]} == {
-        "mmi", "cop1-fpu", "64-bit-alu",
+        "mmi", "cop1-fpu", "64-bit-memory",
     }
     # 3 unsupported of 5 reachable words
     assert report["supported_pct"] == 40.0

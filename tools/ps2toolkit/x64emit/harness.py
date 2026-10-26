@@ -80,7 +80,7 @@ def run_native(program: Program, guest_mem: EEMemory, initial: EEState):
         ctx.ram_ptr = ctypes.addressof(view)
 
         ret = runner(ctypes.addressof(ctx))
-        return ([ctx.regs[i] & 0xFFFFFFFF for i in range(32)],
+        return ([ctx.regs[i] & 0xFFFFFFFFFFFFFFFF for i in range(32)],
                 ctx.hi, ctx.lo, ret & 0xFFFFFFFF)
     finally:
         _KERNEL32.VirtualFree(addr, 0, _MEM_RELEASE)
@@ -112,7 +112,7 @@ def run_golden(guest_mem: EEMemory, initial: EEState, entry: int, stop: int,
 def _fmt_diff(kind: str, expected, got) -> str:
     if kind in ("regs",):
         diffs = [
-            f"r{i}: golden={a:#010x} native={b:#010x}"
+            f"r{i}: golden={a:#018x} native={b:#018x}"
             for i, (a, b) in enumerate(zip(expected, got)) if a != b
         ]
         return "; ".join(diffs)

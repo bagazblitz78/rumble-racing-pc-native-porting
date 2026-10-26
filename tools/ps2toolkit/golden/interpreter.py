@@ -23,6 +23,7 @@ from __future__ import annotations
 from ..r5900.decoder import DecodedInsn, decode
 
 M32 = 0xFFFFFFFF
+M64 = 0xFFFFFFFFFFFFFFFF
 RAM_SIZE = 32 * 1024 * 1024
 PHYS_MASK = 0x1FFFFFFF
 
@@ -56,6 +57,22 @@ class UnsupportedInstruction(Exception):
 def s32(value: int) -> int:
     value &= M32
     return value - 0x100000000 if value & 0x80000000 else value
+
+
+def s64(value: int) -> int:
+    value &= M64
+    return value - 0x10000000000000000 if value & 0x8000000000000000 else value
+
+
+def sext32(value: int) -> int:
+    """Sign-extend a 32-bit result to the 64-bit GPR width.
+
+    R5900 GPRs are 128-bit, and every 32-bit operation writes a
+    sign-extended 64-bit result. MMI/COP1 (which use the upper lanes) are
+    not modelled yet.
+    """
+    value &= M32
+    return (value | 0xFFFFFFFF00000000) if value & 0x80000000 else value
 
 
 class EEMemory:
@@ -99,7 +116,7 @@ class EEState:
 
     def _set(self, reg: int, value: int):
         if reg != 0:
-            self.regs[reg] = value & M32
+            self.regs[reg] = value & M64
 
     def _get(self, reg: int) -> int:
         return self.regs[reg]
@@ -116,8 +133,12 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
     if m in ("nop",):
         return
     if m == "addiu":
-        st._set(rt, st._get(rs) + insn.imm)
+        st._set(rt, sext32(st._get(rs) + insn.imm))
     elif m == "addi":
+        st._set(rt, sext32(st._get(rs) + insn.imm))
+    elif m == "daddiu":
+        st._set(rt, st._get(rs) + insn.imm)
+    elif m == "daddi":
         st._set(rt, st._get(rs) + insn.imm)
     elif m == "andi":
         st._set(rt, st._get(rs) & insn.uimm)
@@ -126,28 +147,46 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
     elif m == "xori":
         st._set(rt, st._get(rs) ^ insn.uimm)
     elif m == "lui":
-        st._set(rt, insn.uimm << 16)
+        st._set(rt, sext32(insn.uimm << 16))
     elif m == "slti":
-        st._set(rt, 1 if s32(st._get(rs)) < insn.imm else 0)
+        st._set(rt, 1 if s64(st._get(rs)) < insn.imm else 0)
     elif m == "sltiu":
-        st._set(rt, 1 if st._get(rs) < ((insn.imm) & M32) else 0)
+        st._set(rt, 1 if st._get(rs) < (insn.imm & M64) else 0)
     elif m in ("sll", "srl", "sra"):
-        v = st._get(rt)
+        v = st._get(rt) & M32
         if m == "sll":
-            st._set(rd, v << insn.shamt)
+            st._set(rd, sext32(v << insn.shamt))
         elif m == "srl":
-            st._set(rd, v >> insn.shamt)
+            st._set(rd, sext32(v >> insn.shamt))
         else:
-            st._set(rd, s32(v) >> insn.shamt)
+            st._set(rd, sext32(s32(v) >> insn.shamt))
     elif m in ("sllv", "srlv", "srav"):
-        v = st._get(rt)
+        v = st._get(rt) & M32
         sh = st._get(rs) & 0x1F
         if m == "sllv":
-            st._set(rd, v << sh)
+            st._set(rd, sext32(v << sh))
         elif m == "srlv":
+            st._set(rd, sext32(v >> sh))
+        else:
+            st._set(rd, sext32(s32(v) >> sh))
+    elif m in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
+        amount = insn.shamt + (32 if m.endswith("32") else 0)
+        v = st._get(rt)
+        if m.startswith("dsll"):
+            st._set(rd, v << amount)
+        elif m.startswith("dsrl"):
+            st._set(rd, v >> amount)
+        else:
+            st._set(rd, s64(v) >> amount)
+    elif m in ("dsllv", "dsrlv", "dsrav"):
+        v = st._get(rt)
+        sh = st._get(rs) & 0x3F
+        if m == "dsllv":
+            st._set(rd, v << sh)
+        elif m == "dsrlv":
             st._set(rd, v >> sh)
         else:
-            st._set(rd, s32(v) >> sh)
+            st._set(rd, s64(v) >> sh)
     elif m == "movz":
         if st._get(rt) == 0:
             st._set(rd, st._get(rs))
@@ -157,9 +196,9 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
     elif m in ("sync", "cache", "pref"):
         return  # no caches / coherence model in the single-threaded golden core
     elif m in ("add", "addu"):
-        st._set(rd, st._get(rs) + st._get(rt))
+        st._set(rd, sext32(st._get(rs) + st._get(rt)))
     elif m in ("sub", "subu"):
-        st._set(rd, st._get(rs) - st._get(rt))
+        st._set(rd, sext32(st._get(rs) - st._get(rt)))
     elif m == "and":
         st._set(rd, st._get(rs) & st._get(rt))
     elif m == "or":
@@ -167,17 +206,21 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
     elif m == "xor":
         st._set(rd, st._get(rs) ^ st._get(rt))
     elif m == "nor":
-        st._set(rd, ~(st._get(rs) | st._get(rt)) & M32)
+        st._set(rd, ~(st._get(rs) | st._get(rt)))
     elif m == "slt":
-        st._set(rd, 1 if s32(st._get(rs)) < s32(st._get(rt)) else 0)
+        st._set(rd, 1 if s64(st._get(rs)) < s64(st._get(rt)) else 0)
     elif m == "sltu":
         st._set(rd, 1 if st._get(rs) < st._get(rt) else 0)
+    elif m in ("dadd", "daddu"):
+        st._set(rd, st._get(rs) + st._get(rt))
+    elif m in ("dsub", "dsubu"):
+        st._set(rd, st._get(rs) - st._get(rt))
     elif m == "mult":
         prod = s32(st._get(rs)) * s32(st._get(rt))
         st.hi = (prod >> 32) & M32
         st.lo = prod & M32
     elif m == "multu":
-        prod = st._get(rs) * st._get(rt)
+        prod = (st._get(rs) & M32) * (st._get(rt) & M32)
         st.hi = (prod >> 32) & M32
         st.lo = prod & M32
     elif m == "div":
@@ -196,7 +239,7 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
             st.lo = q & M32
             st.hi = r & M32
     elif m == "divu":
-        dividend, divisor = st._get(rs), st._get(rt)
+        dividend, divisor = st._get(rs) & M32, st._get(rt) & M32
         if divisor == 0:
             st.lo = M32
             st.hi = dividend
@@ -204,57 +247,63 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
             st.lo = dividend // divisor
             st.hi = dividend % divisor
     elif m == "mfhi":
-        st._set(rd, st.hi)
+        st._set(rd, sext32(st.hi))
     elif m == "mflo":
-        st._set(rd, st.lo)
+        st._set(rd, sext32(st.lo))
     elif m == "mthi":
-        st.hi = st._get(rs)
+        st.hi = st._get(rs) & M32
     elif m == "mtlo":
-        st.lo = st._get(rs)
+        st.lo = st._get(rs) & M32
     elif m == "syscall":
         raise GuestSyscall((insn.raw >> 6) & 0xFFFFF, insn.addr)
     elif m == "break":
         raise GuestBreak((insn.raw >> 6) & 0xFFFFF, insn.addr)
-    elif m in ("lb", "lbu", "lh", "lhu", "lw", "lwl", "lwr"):
-        addr = st._get(rs) + insn.imm
+    elif m in ("lb", "lbu", "lh", "lhu", "lw", "lwu", "ld", "lwl", "lwr"):
+        addr = (st._get(rs) + insn.imm) & M32
         if m == "lb":
             v = mem.read(addr, 1)[0]
-            st._set(rt, v - 0x100 if v & 0x80 else v)
+            st._set(rt, sext32(v - 0x100 if v & 0x80 else v))
         elif m == "lbu":
             st._set(rt, mem.read(addr, 1)[0])
         elif m == "lh":
             v = _load_be(mem, addr, 2)
-            st._set(rt, v - 0x10000 if v & 0x8000 else v)
+            st._set(rt, sext32(v - 0x10000 if v & 0x8000 else v))
         elif m == "lhu":
             st._set(rt, _load_be(mem, addr, 2))
         elif m == "lw":
+            st._set(rt, sext32(_load_be(mem, addr, 4)))
+        elif m == "lwu":
             st._set(rt, _load_be(mem, addr, 4))
+        elif m == "ld":
+            st._set(rt, _load_be(mem, addr, 8))
         elif m == "lwl":
             byte = addr & 3
             n = 4 - byte
             val = _load_be(mem, addr, n)
             keep = (1 << (8 * byte)) - 1  # keep low `byte` bytes of rt
-            st._set(rt, (val << (8 * byte)) | (st._get(rt) & keep))
+            st._set(rt, sext32((val << (8 * byte)) | (st._get(rt) & keep)))
         elif m == "lwr":
             byte = addr & 3
             n = byte + 1
             aligned = addr & ~3
             val = _load_be(mem, aligned, n)
             keep = M32 ^ ((1 << (8 * n)) - 1)  # keep high (4-n) bytes of rt
-            st._set(rt, (st._get(rt) & keep) | val)
-    elif m in ("sb", "sh", "sw", "swl", "swr"):
-        addr = st._get(rs) + insn.imm
+            st._set(rt, sext32((st._get(rt) & keep) | val))
+    elif m in ("sb", "sh", "sw", "sd", "swl", "swr"):
+        addr = (st._get(rs) + insn.imm) & M32
         value = st._get(rt)
         if m == "sb":
             mem.write(addr, bytes([value & 0xFF]))
         elif m == "sh":
             mem.write(addr, (value & 0xFFFF).to_bytes(2, "big"))
         elif m == "sw":
-            mem.write(addr, value.to_bytes(4, "big"))
+            mem.write(addr, (value & M32).to_bytes(4, "big"))
+        elif m == "sd":
+            mem.write(addr, (value & M64).to_bytes(8, "big"))
         elif m == "swl":
             byte = addr & 3
             n = 4 - byte
-            part = value >> (8 * byte)  # high `n` bytes of rt
+            part = (value & M32) >> (8 * byte)  # high `n` bytes of rt
             mem.write(addr, part.to_bytes(n, "big"))
         elif m == "swr":
             byte = addr & 3
@@ -276,13 +325,13 @@ def _branch_target(st: EEState, insn: DecodedInsn) -> tuple[bool, int]:
     if m in ("bne", "bnel"):
         return st._get(rs) != st._get(rt), target
     if m in ("blez", "blezl"):
-        return s32(st._get(rs)) <= 0, target
+        return s64(st._get(rs)) <= 0, target
     if m in ("bgtz", "bgtzl"):
-        return s32(st._get(rs)) > 0, target
+        return s64(st._get(rs)) > 0, target
     if m in ("bltz", "bltzl", "bltzal", "bltzall"):
-        return s32(st._get(rs)) < 0, target
+        return s64(st._get(rs)) < 0, target
     if m in ("bgez", "bgezl", "bgezal", "bgezall"):
-        return s32(st._get(rs)) >= 0, target
+        return s64(st._get(rs)) >= 0, target
     if m == "j":
         return True, insn.target
     if m == "jal":

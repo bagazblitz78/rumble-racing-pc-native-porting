@@ -379,9 +379,10 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "code alone cannot execute the boot ELF.",
         "- **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need "
         "the same FPU state hand-off.",
-        "- **64-bit integer forms** (DADDU/DSUB/DADDI/LD/SD and the DSLL/DSRL "
-        "family) require 64-bit GPR semantics; the current MVP stores 32-bit "
-        "values, so this is an architectural change, not a decoder table entry.",
+        "- **64-bit integer forms** are translated as of T3.3: GPRs hold "
+        "64-bit values, 32-bit results sign-extend, and DADDU/DSUB/DADDIU, "
+        "the DSLL/DSRL family and LD/SD/LWU all run natively. Only the "
+        "unaligned LDL/LDR/SDL/SDR forms remain.",
         "- **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and "
         "will likely be stubbed behind an HLE boundary first.",
         "- **Cheap wins already landed** (T3.2): MOVZ/MOVN, SYNC, CACHE/PREF "

@@ -22,7 +22,7 @@ def make_state(seed: int | None = None) -> EEState:
     if seed is not None:
         rnd = random.Random(seed)
         for i in range(31):
-            st.regs[i] = rnd.getrandbits(32)
+            st.regs[i] = rnd.getrandbits(64)
         st.hi = rnd.getrandbits(32)
         st.lo = rnd.getrandbits(32)
     st.regs[0] = 0  # $zero is hardwired; codegen treats rs==0 as literal 0

@@ -15,7 +15,7 @@ import random
 import pytest
 
 from tests import asm as a
-from tests.difftest import CLOBBERABLE, run_case
+from tests.difftest import CLOBBERABLE, make_state, run_case
 
 READABLE = list(range(29))  # 0..28; $zero reads as 0 on both sides
 SHIFTS = ("sll", "srl", "sra")
@@ -23,7 +23,7 @@ SHIFTS = ("sll", "srl", "sra")
 
 def _simple(rnd: random.Random) -> int:
     """One non-branch, non-delay-carrying instruction."""
-    kind = rnd.randrange(18)
+    kind = rnd.randrange(23)
     rd = rnd.choice(CLOBBERABLE)
     rs, rt = rnd.choice(READABLE), rnd.choice(READABLE)
     if kind == 0:
@@ -65,12 +65,22 @@ def _simple(rnd: random.Random) -> int:
             a.cache(rnd.randrange(32), rnd.randrange(0, 64), a.SP),
             a.pref(rnd.randrange(32), rnd.randrange(0, 64), a.SP),
         ))
-    # memory
+    if kind == 17:
+        return rnd.choice((a.dadd, a.daddu, a.dsub, a.dsubu))(rd, rs, rt)
+    if kind == 18:
+        return rnd.choice((a.daddi, a.daddiu))(
+            rnd.choice(CLOBBERABLE), rs, rnd.randint(-32768, 32767))
+    if kind == 19:
+        op = rnd.choice((a.dsll, a.dsrl, a.dsra, a.dsll32, a.dsrl32, a.dsra32))
+        return op(rd, rt, rnd.randrange(32))
+    if kind == 20:
+        return rnd.choice((a.dsllv, a.dsrlv, a.dsrav))(rd, rt, rs)
+    # memory (32- and 64-bit forms)
     return _memory(rnd, rd, rs)
 
 
 def _memory(rnd: random.Random, rd: int, rs: int) -> int:
-    kind = rnd.randrange(8)
+    kind = rnd.randrange(11)
     if kind == 0:
         return a.sw(rnd.choice(READABLE), rnd.randrange(64) * 4, a.SP)
     if kind == 1:
@@ -85,8 +95,14 @@ def _memory(rnd: random.Random, rd: int, rs: int) -> int:
         return a.lhu(rd, rnd.randrange(128) * 2, a.SP)
     if kind == 6:
         return rnd.choice((a.lwl, a.lwr))(rd, rnd.randrange(253), a.SP)
-    return rnd.choice((a.swl, a.swr))(rnd.choice(READABLE),
-                                       rnd.randrange(253), a.SP)
+    if kind == 7:
+        return rnd.choice((a.swl, a.swr))(rnd.choice(READABLE),
+                                          rnd.randrange(253), a.SP)
+    if kind == 8:
+        return a.sd(rnd.choice(READABLE), rnd.randrange(32) * 8, a.SP)
+    if kind == 9:
+        return a.ld(rd, rnd.randrange(32) * 8, a.SP)
+    return a.lwu(rd, rnd.randrange(64) * 4, a.SP)
 
 
 def _branch(rnd: random.Random) -> int:
@@ -134,6 +150,30 @@ def test_random_programs_match_golden():
         "randomized differential failures:\n"
         + "\n".join(f"seed {s}: {e}" for s, e in failures)
     )
+
+
+def test_64_bit_ops_and_memory_match_golden():
+    st = make_state()
+    st.regs[a.T0] = 0xFFFFFFFF00000001
+    st.regs[a.T1] = 0x0000000200000004
+    st.regs[a.T2] = 0x8000000000000001
+    run_case([
+        a.daddu(a.T3, a.T0, a.T1),
+        a.dsubu(a.T4, a.T3, a.T1),
+        a.daddiu(a.T5, a.T2, -1),
+        a.dsll(a.T6, a.T2, 4),
+        a.dsrl(a.T7, a.T2, 4),
+        a.dsra(a.T8, a.T2, 4),
+        a.dsllv(a.S0, a.T2, a.T1),
+        a.sd(a.T0, 0, a.SP),
+        a.ld(a.S1, 0, a.SP),
+        a.lwu(a.S2, 4, a.SP),
+        a.sw(a.T2, 8, a.SP),
+        a.slt(a.S3, a.T2, a.ZERO),
+        a.sltu(a.S4, a.T2, a.ZERO),
+        a.jr(a.RA),
+        a.NOP,
+    ], state=st, label="64-bit")
 
 
 def _branch_case(branch_word, t0=3, t1=3):

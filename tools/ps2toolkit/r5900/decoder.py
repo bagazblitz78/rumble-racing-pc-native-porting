@@ -21,10 +21,14 @@ _SPECIAL = {
     0x08: "jr", 0x09: "jalr", 0x0A: "movz", 0x0B: "movn",
     0x0C: "syscall", 0x0D: "break", 0x0F: "sync",
     0x10: "mfhi", 0x11: "mthi", 0x12: "mflo", 0x13: "mtlo",
+    0x14: "dsllv", 0x16: "dsrlv", 0x17: "dsrav",
     0x18: "mult", 0x19: "multu", 0x1A: "div", 0x1B: "divu",
     0x20: "add", 0x21: "addu", 0x22: "sub", 0x23: "subu",
     0x24: "and", 0x25: "or", 0x26: "xor", 0x27: "nor",
     0x2A: "slt", 0x2B: "sltu",
+    0x2C: "dadd", 0x2D: "daddu", 0x2E: "dsub", 0x2F: "dsubu",
+    0x38: "dsll", 0x3A: "dsrl", 0x3B: "dsra",
+    0x3C: "dsll32", 0x3E: "dsrl32", 0x3F: "dsra32",
 }
 
 _REGIMM = {
@@ -38,9 +42,10 @@ _OPCODE = {
     0x08: "addi", 0x09: "addiu", 0x0A: "slti", 0x0B: "sltiu",
     0x0C: "andi", 0x0D: "ori", 0x0E: "xori", 0x0F: "lui",
     0x14: "beql", 0x15: "bnel", 0x16: "blezl", 0x17: "bgtzl",
+    0x18: "daddi", 0x19: "daddiu",
     0x20: "lb", 0x21: "lh", 0x22: "lwl", 0x23: "lw", 0x24: "lbu", 0x25: "lhu",
-    0x26: "lwr", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw", 0x2E: "swr",
-    0x2F: "cache", 0x33: "pref",
+    0x26: "lwr", 0x27: "lwu", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw",
+    0x2E: "swr", 0x2F: "cache", 0x33: "pref", 0x37: "ld", 0x3F: "sd",
 }
 
 _BRANCHES = {
@@ -50,8 +55,8 @@ _BRANCHES = {
 }
 _LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall", "bgezall"}
 _BRANCH_LINKS = {"bltzal", "bgezal", "bltzall", "bgezall"}
-_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr"}
-_STORES = {"sb", "sh", "swl", "sw", "swr"}
+_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld"}
+_STORES = {"sb", "sh", "swl", "sw", "swr", "sd"}
 _JUMPS = {"j", "jal"}
 _LINKERS = {"jal", "jalr"}
 
@@ -118,7 +123,10 @@ class DecodedInsn:
         r = lambda n: f"${REG_NAMES[n]}"
         if m in ("sll", "srl", "sra"):
             return f"{m} {r(self.rd)}, {r(self.rt)}, {self.shamt}"
-        if m in ("sllv", "srlv", "srav"):
+        if m in ("dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32"):
+            amount = self.shamt + (32 if m.endswith("32") else 0)
+            return f"{m} {r(self.rd)}, {r(self.rt)}, {amount}"
+        if m in ("sllv", "srlv", "srav", "dsllv", "dsrlv", "dsrav"):
             return f"{m} {r(self.rd)}, {r(self.rt)}, {r(self.rs)}"
         if m in ("jr", "jalr"):
             return f"{m} {r(self.rs)}" + (f", {r(self.rd)}" if m == "jalr" and self.rd != 31 else "")
@@ -130,11 +138,13 @@ class DecodedInsn:
             return f"{m} {r(self.rs)}, {r(self.rt)}"
         if m in ("syscall", "break", "sync"):
             return m
-        if m in ("addu", "add", "subu", "sub", "and", "or", "xor", "nor", "slt", "sltu"):
+        if m in ("addu", "add", "subu", "sub", "and", "or", "xor", "nor", "slt",
+                 "sltu", "dadd", "daddu", "dsub", "dsubu"):
             return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
         if m in ("movz", "movn"):
             return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
-        if m in ("addiu", "addi", "slti", "sltiu", "andi", "ori", "xori"):
+        if m in ("addiu", "addi", "slti", "sltiu", "andi", "ori", "xori",
+                 "daddiu", "daddi"):
             if m in ("andi", "ori", "xori"):
                 immstr = f"{self.uimm:#x}"
             else:

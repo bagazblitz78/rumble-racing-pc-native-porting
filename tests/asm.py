@@ -44,6 +44,30 @@ def subu(rd, rs, rt):
     return enc_r(0, rs, rt, rd, 0, 35)
 
 
+def dadd(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 44)
+
+
+def daddu(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 45)
+
+
+def dsub(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 46)
+
+
+def dsubu(rd, rs, rt):
+    return enc_r(0, rs, rt, rd, 0, 47)
+
+
+def daddiu(rt, rs, imm):
+    return enc_i(25, rs, rt, imm)
+
+
+def daddi(rt, rs, imm):
+    return enc_i(24, rs, rt, imm)
+
+
 def or_(rd, rs, rt):
     return enc_r(0, rs, rt, rd, 0, 37)
 
@@ -118,6 +142,42 @@ def srlv(rd, rt, rs):
 
 def srav(rd, rt, rs):
     return enc_r(0, rs, rt, rd, 0, 7)
+
+
+def dsll(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 56)
+
+
+def dsrl(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 58)
+
+
+def dsra(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 59)
+
+
+def dsll32(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 60)
+
+
+def dsrl32(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 62)
+
+
+def dsra32(rd, rt, shamt):
+    return enc_r(0, 0, rt, rd, shamt, 63)
+
+
+def dsllv(rd, rt, rs):
+    return enc_r(0, rs, rt, rd, 0, 20)
+
+
+def dsrlv(rd, rt, rs):
+    return enc_r(0, rs, rt, rd, 0, 22)
+
+
+def dsrav(rd, rt, rs):
+    return enc_r(0, rs, rt, rd, 0, 23)
 
 
 def jr(rs):
@@ -226,6 +286,18 @@ def lbu(rt, off, base):
 
 def lhu(rt, off, base):
     return enc_i(37, base, rt, off)
+
+
+def lwu(rt, off, base):
+    return enc_i(39, base, rt, off)
+
+
+def ld(rt, off, base):
+    return enc_i(55, base, rt, off)
+
+
+def sd(rt, off, base):
+    return enc_i(63, base, rt, off)
 
 
 def lwr(rt, off, base):

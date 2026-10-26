@@ -140,6 +140,37 @@ def test_loads_stores():
     assert d(enc_i(42, 8, 9, 4)).mnemonic == "swl"  # 0x2A
 
 
+def test_64_bit_integer_forms():
+    daddu = d(enc_r(0, 8, 9, 10, 0, 45))
+    assert daddu.mnemonic == "daddu"
+    assert (daddu.rs, daddu.rt, daddu.rd) == (8, 9, 10)
+    assert d(enc_r(0, 8, 9, 10, 0, 44)).mnemonic == "dadd"
+    assert d(enc_r(0, 8, 9, 10, 0, 46)).mnemonic == "dsub"
+    assert d(enc_r(0, 8, 9, 10, 0, 47)).mnemonic == "dsubu"
+    assert d(enc_i(25, 8, 10, -4)).mnemonic == "daddiu"
+    assert d(enc_i(24, 8, 10, -4)).mnemonic == "daddi"
+
+    dsll = d(enc_r(0, 0, 8, 9, 4, 56))
+    assert dsll.mnemonic == "dsll" and dsll.shamt == 4
+    assert d(enc_r(0, 0, 8, 9, 4, 58)).mnemonic == "dsrl"
+    assert d(enc_r(0, 0, 8, 9, 4, 59)).mnemonic == "dsra"
+    assert d(enc_r(0, 0, 8, 9, 4, 60)).mnemonic == "dsll32"
+    assert d(enc_r(0, 0, 8, 9, 4, 62)).mnemonic == "dsrl32"
+    assert d(enc_r(0, 0, 8, 9, 4, 63)).mnemonic == "dsra32"
+    assert d(enc_r(0, 10, 8, 9, 0, 20)).mnemonic == "dsllv"
+    assert d(enc_r(0, 10, 8, 9, 0, 22)).mnemonic == "dsrlv"
+    assert d(enc_r(0, 10, 8, 9, 0, 23)).mnemonic == "dsrav"
+
+
+def test_64_bit_memory_forms():
+    ld = d(enc_i(55, 8, 9, 16))
+    assert ld.mnemonic == "ld" and ld.is_load
+    sd = d(enc_i(63, 8, 9, 16))
+    assert sd.mnemonic == "sd" and sd.is_store
+    lwu = d(enc_i(39, 8, 9, 16))
+    assert lwu.mnemonic == "lwu" and lwu.is_load
+
+
 def test_mult_div_mfhi_mflo():
     assert d(enc_r(0, 8, 9, 0, 0, 24)).mnemonic == "mult"
     assert d(enc_r(0, 8, 9, 0, 0, 25)).mnemonic == "multu"
