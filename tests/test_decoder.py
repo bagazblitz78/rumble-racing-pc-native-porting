@@ -171,6 +171,27 @@ def test_64_bit_memory_forms():
     assert lwu.mnemonic == "lwu" and lwu.is_load
 
 
+def test_lq_sq():
+    lq = d(enc_i(0x1E, 8, 9, 16))
+    assert lq.mnemonic == "lq" and lq.is_load
+    assert (lq.rt, lq.rs, lq.imm) == (9, 8, 16)
+    sq = d(enc_i(0x1F, 8, 9, 48))
+    assert sq.mnemonic == "sq" and sq.is_store
+    assert (sq.rt, sq.rs, sq.imm) == (9, 8, 48)
+
+
+def test_cop0_moves_and_control():
+    mfc0 = d(enc_r(0x10, 0, 9, 12, 0, 0))
+    assert mfc0.mnemonic == "mfc0"
+    assert (mfc0.rt, mfc0.rd) == (9, 12)
+    mtc0 = d(enc_r(0x10, 4, 9, 12, 0, 0))
+    assert mtc0.mnemonic == "mtc0"
+    assert (mtc0.rt, mtc0.rd) == (9, 12)
+    assert d((0x10 << 26) | (0x10 << 21) | 0x38).mnemonic == "ei"
+    assert d((0x10 << 26) | (0x10 << 21) | 0x39).mnemonic == "di"
+    assert d((0x10 << 26) | (0x10 << 21) | 0x18).mnemonic == "eret"
+
+
 def test_mult_div_mfhi_mflo():
     assert d(enc_r(0, 8, 9, 0, 0, 24)).mnemonic == "mult"
     assert d(enc_r(0, 8, 9, 0, 0, 25)).mnemonic == "multu"

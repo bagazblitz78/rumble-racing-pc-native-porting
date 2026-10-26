@@ -23,7 +23,7 @@ def _compile_exe(words, path: Path) -> Path:
     mem = EEMemory()
     a.assemble(mem, CODE, *words)
     stop = CODE + 4 * len(words)
-    insn_at = lambda addr: decode(mem.read32(addr), addr)  # noqa: E731
+    insn_at = lambda addr: decode(mem.fetch32(addr), addr)  # noqa: E731
     program = compile_program(insn_at, CODE, stop_addrs={stop})
     return build_exe(program, path)
 
@@ -109,7 +109,7 @@ def test_exe_entry_not_at_code_start(tmp_path):
     mem = EEMemory()
     a.assemble(mem, CODE, *words)
     stop = CODE + 4 * len(words)
-    insn_at = lambda addr: decode(mem.read32(addr), addr)  # noqa: E731
+    insn_at = lambda addr: decode(mem.fetch32(addr), addr)  # noqa: E731
     program = compile_program(insn_at, CODE + 0x20, stop_addrs={stop})
     assert program.entry_offset == program.function_offsets[CODE + 0x20] > 0
     exe = build_exe(program, tmp_path / "entry20.exe")

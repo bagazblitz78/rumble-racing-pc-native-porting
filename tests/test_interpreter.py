@@ -12,6 +12,7 @@ from ps2toolkit.golden.interpreter import (
     MemoryFault,
     run,
     sext32,
+    sext64,
     step,
 )
 
@@ -106,7 +107,7 @@ def test_logic_ops():
     assert st.regs[a.T2] == 0x00F000F0
     assert st.regs[a.T3] == 0xFFF0FFF0
     assert st.regs[a.T4] == 0xFF00FF00
-    assert st.regs[a.T5] == 0xFFFFFFFF000F000F  # 64-bit NOR
+    assert st.regs[a.T5] == sext64(0xFFFFFFFF000F000F)  # 64-bit NOR
 
 
 def test_slt_sltu():
@@ -304,7 +305,7 @@ def test_daddu_dsubu_full_width():
     step(st, mem)
     step(st, mem)
     assert st.regs[a.T2] == 0x0000000100000005  # 64-bit wrap
-    assert st.regs[a.T3] == 0xFFFFFFFF00000001
+    assert st.regs[a.T3] == sext64(0xFFFFFFFF00000001)
 
 
 def test_daddiu_sign_extends_immediate():
@@ -315,7 +316,7 @@ def test_daddiu_sign_extends_immediate():
     step(st, mem)
     step(st, mem)
     assert st.regs[a.T1] == 0x7FFFFFFFFFFFFFFF  # wraps at 64 bits
-    assert st.regs[a.T2] == 0xFFFFFFFFFFFFFFFF
+    assert st.regs[a.T2] == sext64(-1)
 
 
 def test_64_bit_shifts():
@@ -335,10 +336,10 @@ def test_64_bit_shifts():
         step(st, mem)
     assert st.regs[a.T1] == 0x0000000000000010
     assert st.regs[a.T2] == 0x0800000000000000
-    assert st.regs[a.T3] == 0xF800000000000000
+    assert st.regs[a.T3] == sext64(0xF800000000000000)
     assert st.regs[a.T4] == 0x0000000200000000  # bit 63 shifted out, bit 0 -> 33
     assert st.regs[a.T5] == 0x0000000040000000  # bit 63 -> bit 30
-    assert st.regs[a.T6] == 0xFFFFFFFFC0000000  # arithmetic: -2^30
+    assert st.regs[a.T6] == sext64(0xFFFFFFFFC0000000)  # arithmetic: -2^30
 
 
 def test_64_bit_variable_shifts_use_low_six_bits():
@@ -380,6 +381,54 @@ def test_ld_sd_lwu_big_endian():
     assert mem.read(STACK + 8, 4) == b"\x89\xAB\xCD\xEF"
     assert st.regs[a.T2] == 0x0123456789ABCDEF
     assert st.regs[a.T3] == 0x89ABCDEF  # zero-extended
+
+
+def test_lq_sq_full_128_bits():
+    st, mem = make()
+    st.regs[a.T0] = STACK
+    value = 0x0102030405060708090A0B0C0D0E0F10
+    st.regs[a.T1] = value
+    a.assemble(mem, CODE, a.sq(a.T1, 0, a.T0), a.lq(a.T2, 0, a.T0), a.NOP)
+    step(st, mem)
+    step(st, mem)
+    assert mem.read(STACK, 16) == bytes(range(1, 17))
+    assert st.regs[a.T2] == value
+    assert st.regs[a.T2] > 0xFFFFFFFFFFFFFFFF  # the upper lane survived
+
+
+def test_cop0_moves_and_interrupt_enable():
+    st, mem = make()
+    st.cop0[12] = 0x00400000
+    st.regs[a.T0] = 0x00400002
+    a.assemble(
+        mem, CODE,
+        a.enc_r(0x10, 0, a.T1, 12, 0, 0),   # mfc0 $t1, $12
+        a.enc_r(0x10, 4, a.T0, 12, 0, 0),   # mtc0 $t0, $12
+        a.NOP,
+    )
+    step(st, mem)
+    assert st.regs[a.T1] == sext32(0x00400000)
+    step(st, mem)
+    assert st.cop0[12] == 0x00400002     # stored as a 32-bit register
+    assert not st.cop0[12] & 1
+
+
+def test_ei_di_and_eret():
+    st, mem = make()
+    st.cop0[14] = 0x00101234             # EPC
+    a.assemble(
+        mem, CODE,
+        a.enc_r(0x10, 0x10, 0, 0, 0, 0x38),  # ei
+        a.enc_r(0x10, 0x10, 0, 0, 0, 0x39),  # di
+        a.enc_r(0x10, 0x10, 0, 0, 0, 0x18),  # eret
+        a.NOP,
+    )
+    step(st, mem)
+    assert st.cop0[12] & 1
+    step(st, mem)
+    assert not st.cop0[12] & 1
+    step(st, mem)
+    assert st.pc == 0x00101234
 
 
 # --- control flow ---

@@ -43,6 +43,7 @@ _OPCODE = {
     0x0C: "andi", 0x0D: "ori", 0x0E: "xori", 0x0F: "lui",
     0x14: "beql", 0x15: "bnel", 0x16: "blezl", 0x17: "bgtzl",
     0x18: "daddi", 0x19: "daddiu",
+    0x1E: "lq", 0x1F: "sq",
     0x20: "lb", 0x21: "lh", 0x22: "lwl", 0x23: "lw", 0x24: "lbu", 0x25: "lhu",
     0x26: "lwr", 0x27: "lwu", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw",
     0x2E: "swr", 0x2F: "cache", 0x33: "pref", 0x37: "ld", 0x3F: "sd",
@@ -55,8 +56,8 @@ _BRANCHES = {
 }
 _LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall", "bgezall"}
 _BRANCH_LINKS = {"bltzal", "bgezal", "bltzall", "bgezall"}
-_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld"}
-_STORES = {"sb", "sh", "swl", "sw", "swr", "sd"}
+_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld", "lq"}
+_STORES = {"sb", "sh", "swl", "sw", "swr", "sd", "sq"}
 _JUMPS = {"j", "jal"}
 _LINKERS = {"jal", "jalr"}
 
@@ -136,8 +137,10 @@ class DecodedInsn:
             return f"{m} {r(self.rs)}"
         if m in ("mult", "multu", "div", "divu"):
             return f"{m} {r(self.rs)}, {r(self.rt)}"
-        if m in ("syscall", "break", "sync"):
+        if m in ("syscall", "break", "sync", "eret", "ei", "di"):
             return m
+        if m in ("mfc0", "mtc0"):
+            return f"{m} {r(self.rt)}, ${self.rd}"
         if m in ("addu", "add", "subu", "sub", "and", "or", "xor", "nor", "slt",
                  "sltu", "dadd", "daddu", "dsub", "dsubu"):
             return f"{m} {r(self.rd)}, {r(self.rs)}, {r(self.rt)}"
@@ -188,6 +191,18 @@ def decode(word: int, addr: int) -> DecodedInsn:
     if opcode == 0x01:  # REGIMM
         rt_field = rt
         mnemonic = _REGIMM.get(rt_field, "unsupported")
+        return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt, imm, uimm)
+
+    if opcode == 0x10:  # COP0
+        if rs == 0x00:
+            mnemonic = "mfc0"      # rt <- cop0[rd]
+        elif rs == 0x04:
+            mnemonic = "mtc0"      # cop0[rd] <- rt
+        elif rs == 0x10:
+            mnemonic = {0x18: "eret", 0x38: "ei", 0x39: "di"}.get(funct,
+                                                                  "unsupported")
+        else:
+            mnemonic = "unsupported"
         return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt, imm, uimm)
 
     if opcode in (0x02, 0x03):  # j / jal

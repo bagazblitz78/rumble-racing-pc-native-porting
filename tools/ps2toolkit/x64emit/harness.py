@@ -123,6 +123,9 @@ def compare_results(golden, native):
     """Raise AssertionError describing any state divergence."""
     g_regs, g_hi, g_lo, g_code = golden
     n_regs, n_hi, n_lo, n_code = native
+    # The recompiler's context slots are 64-bit; MMI/LQ/SQ (upper 64 bits)
+    # are modelled by the golden interpreter only at this stage.
+    g_regs = [r & 0xFFFFFFFFFFFFFFFF for r in g_regs]
     if g_regs != n_regs:
         raise AssertionError(f"regs diverge: {_fmt_diff('regs', g_regs, n_regs)}")
     if g_hi != n_hi:

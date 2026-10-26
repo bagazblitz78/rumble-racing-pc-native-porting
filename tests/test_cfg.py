@@ -25,7 +25,7 @@ def build(*words, entry=CODE):
 
 def insn_at(mem, addr):
     from ps2toolkit.r5900.decoder import decode
-    return decode(mem.read32(addr), addr)
+    return decode(mem.fetch32(addr), addr)
 
 
 def test_straight_line_block():

@@ -22,9 +22,9 @@ PF_R = 4
 
 
 def build_elf(entry: int, words: list[int], vaddr: int = CODE,
-              exec_flags: int = PF_R | PF_X) -> bytes:
+              exec_flags: int = PF_R | PF_X, extra: bytes = b"") -> bytes:
     """Minimal little-endian ELF32/MIPS with one PT_LOAD segment."""
-    code = b"".join(struct.pack("<I", w & 0xFFFFFFFF) for w in words)
+    code = b"".join(struct.pack("<I", w & 0xFFFFFFFF) for w in words) + extra
     ehdr = struct.pack(
         "<16sHHIIIIIHHHHHH",
         b"\x7fELF" + bytes([1, 1, 1]) + bytes(9),  # ident: 32-bit LE, v1

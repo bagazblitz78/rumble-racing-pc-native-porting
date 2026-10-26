@@ -300,6 +300,14 @@ def sd(rt, off, base):
     return enc_i(63, base, rt, off)
 
 
+def lq(rt, off, base):
+    return enc_i(30, base, rt, off)
+
+
+def sq(rt, off, base):
+    return enc_i(31, base, rt, off)
+
+
 def lwr(rt, off, base):
     return enc_i(38, base, rt, off)
 
@@ -373,6 +381,6 @@ NOP = 0
 
 def assemble(mem, addr, *words):
     """Write instruction words into guest memory starting at addr."""
-    data = b"".join((w & 0xFFFFFFFF).to_bytes(4, "big") for w in words)
+    data = b"".join((w & 0xFFFFFFFF).to_bytes(4, "little") for w in words)
     mem.write(addr, data)
     return addr

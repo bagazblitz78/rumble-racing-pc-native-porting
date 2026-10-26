@@ -374,9 +374,10 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "",
         "## Implications for the recompiler",
         "",
-        "- **MMI + COP1** dominate the gap. The R5900 multimedia instructions "
-        "and the FPU are the first large extensions required; scalar integer "
-        "code alone cannot execute the boot ELF.",
+        "- **MMI + COP1** dominate the remaining gap. LQ/SQ are decoded and "
+        "executed by the golden model as of T3.4, so the next vector extension "
+        "is the MMI opcode space; the FPU is larger overall and equally needed "
+        "before native code can run the game.",
         "- **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need "
         "the same FPU state hand-off.",
         "- **64-bit integer forms** are translated as of T3.3: GPRs hold "
