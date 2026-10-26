@@ -312,15 +312,20 @@ class Asm:
     # --- SSE2 (scratch registers xmm0-xmm3; all caller-saved) ---
 
     def _xmm_rr(self, prefix: int, opcode: int, dst: int, src: int):
-        self.emit(prefix, _rex(r=dst, b=src), 0x0F, opcode,
-                  _modrm(3, dst, src))
+        if prefix:
+            self.emit(prefix)
+        self.emit(_rex(r=dst, b=src), 0x0F, opcode, _modrm(3, dst, src))
 
     def _xmm_rm(self, prefix: int, opcode: int, dst: int, base: int, disp: int):
-        self.emit(prefix, _rex(r=dst, b=base), 0x0F, opcode,
+        if prefix:
+            self.emit(prefix)
+        self.emit(_rex(r=dst, b=base), 0x0F, opcode,
                   _modrm(2, dst, base), struct.pack("<i", disp))
 
     def _xmm_mr(self, prefix: int, opcode: int, base: int, disp: int, src: int):
-        self.emit(prefix, _rex(r=src, b=base), 0x0F, opcode,
+        if prefix:
+            self.emit(prefix)
+        self.emit(_rex(r=src, b=base), 0x0F, opcode,
                   _modrm(2, src, base), struct.pack("<i", disp))
 
     def movdqu_ld(self, dst: int, base: int, disp: int):
@@ -391,6 +396,44 @@ class Asm:
     def pmovmskb(self, dst: int, src: int):
         self.emit(0x66, _rex(r=dst, b=src), 0x0F, 0xD7,
                   _modrm(3, dst, src))
+
+    # --- scalar single-precision FPU ---
+
+    def movd_ld(self, dst: int, base: int, disp: int):
+        """movd xmm, dword ptr [base+disp] (zero-extends 32 bits)."""
+        self._xmm_rm(0x66, 0x6E, dst, base, disp)
+
+    def movd_st(self, base: int, disp: int, src: int):
+        """movd dword ptr [base+disp], xmm."""
+        self._xmm_mr(0x66, 0x7E, base, disp, src)
+
+    def movd_xmm_gpr(self, dst: int, src: int):
+        """movd xmm, r32."""
+        self._xmm_rr(0x66, 0x6E, dst, src)
+
+    def movd_gpr_xmm(self, dst: int, src: int):
+        """movd r32, xmm."""
+        self._xmm_rr(0x66, 0x7E, dst, src)
+
+    def movss_ld(self, dst: int, base: int, disp: int):
+        self._xmm_rm(0xF3, 0x10, dst, base, disp)
+
+    def movss_st(self, base: int, disp: int, src: int):
+        self._xmm_mr(0xF3, 0x11, base, disp, src)
+
+    def addss(self, dst, src): self._xmm_rr(0xF3, 0x58, dst, src)
+    def subss(self, dst, src): self._xmm_rr(0xF3, 0x5C, dst, src)
+    def mulss(self, dst, src): self._xmm_rr(0xF3, 0x59, dst, src)
+    def divss(self, dst, src): self._xmm_rr(0xF3, 0x5E, dst, src)
+    def sqrtss(self, dst, src): self._xmm_rr(0xF3, 0x51, dst, src)
+    def minss(self, dst, src): self._xmm_rr(0xF3, 0x5D, dst, src)
+    def maxss(self, dst, src): self._xmm_rr(0xF3, 0x5F, dst, src)
+    def ucomiss(self, dst, src): self._xmm_rr(0x00, 0x2E, dst, src)
+    def xorps(self, dst, src): self._xmm_rr(0x00, 0x57, dst, src)
+    def andps(self, dst, src): self._xmm_rr(0x00, 0x54, dst, src)
+    def orps(self, dst, src): self._xmm_rr(0x00, 0x56, dst, src)
+    def cvtsi2ss(self, dst, src): self._xmm_rr(0xF3, 0x2A, dst, src)
+    def cvttss2si(self, dst, src): self._xmm_rr(0xF3, 0x2C, dst, src)
 
     def int3(self):
         self.emit(0xCC)

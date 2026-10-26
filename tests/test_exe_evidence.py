@@ -91,6 +91,21 @@ def test_exe_jal_function_call(tmp_path):
     assert rc == 99
 
 
+def test_exe_fpu_conversion(tmp_path):
+    # mtc1/cvt.s.w/cvt.w.s round-trips the integer 42 through the FPU and
+    # leaves it in v0, proving COP1 executes natively inside the PE.
+    rc = _run([
+        a.addiu(a.T0, a.ZERO, 42),
+        a.enc_r(0x11, 4, a.T0, 0, 0, 0),      # mtc1 $t0, $f0
+        a.enc_r(0x11, 0x14, 0, 0, 0, 0x20),   # cvt.s.w $f0, $f0
+        a.enc_r(0x11, 0x10, 0, 0, 0, 0x24),   # cvt.w.s $f0, $f0
+        a.enc_r(0x11, 0, a.V0, 0, 0, 0),      # mfc1 $v0, $f0
+        a.jr(a.RA),
+        a.NOP,
+    ], tmp_path, "fpu42.exe")
+    assert rc == 42
+
+
 def test_exe_mmi_and_quadword_memory(tmp_path):
     # SQ/LQ move a full 128-bit GPR, PADDUB copies it (rt == 0), and the
     # low byte of v0 becomes the process exit code.

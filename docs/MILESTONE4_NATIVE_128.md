@@ -56,6 +56,6 @@ mnemonic instead of emitting wrong code.
 
 ## Next
 
-COP1/FPU is the remaining scalar native gap (LWC1/SWC1, arithmetic,
-compares and BC1 branches). After that, native codegen covers every scalar
-instruction the boot trace reaches; VU0/COP2 remains the only decoder gap.
+COP1/FPU native lowering landed in milestone 5. VU0/COP2 is now the only
+decoder gap; the remaining native gaps are the VU space and a few MMI
+accumulator/divide forms.

@@ -5,7 +5,8 @@ Native side:
   - code bytes are copied into a PAGE_EXECUTE_READWRITE allocation
     (VirtualAlloc) and called as ``int run(void* ctx)`` (Win64: rcx = ctx).
   - ctx layout matches codegen: regs[i] = i*16 (128-bit, low then high u64),
-    hi = 512, lo = 528 (128-bit each), ram_ptr = 544.
+    hi = 512, lo = 528 (128-bit each), ram_ptr = 544, fpr[32] = 552,
+    fcr31 = 680, fpu_acc = 684.
   - the guest RAM base (r14) points directly at the live bytearray buffer of
     an ``EEMemory``, so no 32MB copies are needed per run.
   - return value: -1 (0xFFFFFFFF) on normal completion, else the guest
@@ -55,6 +56,9 @@ class Ctx(ctypes.Structure):
         ("hi", ctypes.c_uint64 * 2),
         ("lo", ctypes.c_uint64 * 2),
         ("ram_ptr", ctypes.c_void_p),
+        ("fpr", ctypes.c_uint32 * 32),
+        ("fcr31", ctypes.c_uint32),
+        ("fpu_acc", ctypes.c_uint32),
     ]
 
 
@@ -82,13 +86,18 @@ def run_native(program: Program, guest_mem: EEMemory, initial: EEState):
         ctx.lo[0] = initial.lo & 0xFFFFFFFFFFFFFFFF
         ctx.lo[1] = (initial.lo >> 64) & 0xFFFFFFFFFFFFFFFF
         ctx.ram_ptr = ctypes.addressof(view)
+        for i in range(32):
+            ctx.fpr[i] = initial.fpr[i] & 0xFFFFFFFF
+        ctx.fcr31 = initial.fcr31 & 0xFFFFFFFF
+        ctx.fpu_acc = initial.fpu_acc & 0xFFFFFFFF
 
         ret = runner(ctypes.addressof(ctx))
         regs = [ctx.regs[2 * i] | (ctx.regs[2 * i + 1] << 64)
                 for i in range(32)]
         hi = ctx.hi[0] | (ctx.hi[1] << 64)
         lo = ctx.lo[0] | (ctx.lo[1] << 64)
-        return regs, hi, lo, ret & 0xFFFFFFFF
+        fpr = [ctx.fpr[i] for i in range(32)]
+        return (regs, hi, lo, ret & 0xFFFFFFFF, fpr, ctx.fcr31, ctx.fpu_acc)
     finally:
         _KERNEL32.VirtualFree(addr, 0, _MEM_RELEASE)
 
@@ -99,6 +108,9 @@ def run_golden(guest_mem: EEMemory, initial: EEState, entry: int, stop: int,
     st = EEState(pc=entry)
     st.regs[:] = initial.regs[:]
     st.hi, st.lo = initial.hi, initial.lo
+    st.fpr[:] = initial.fpr[:]
+    st.fcr31 = initial.fcr31
+    st.fpu_acc = initial.fpu_acc
     steps = 0
     code = EXIT_NORMAL
     while steps < max_steps:
@@ -113,7 +125,7 @@ def run_golden(guest_mem: EEMemory, initial: EEState, entry: int, stop: int,
         raise AssertionError(
             f"golden interpreter hit max_steps={max_steps} (loop did not terminate?)"
         )
-    return st.regs[:], st.hi, st.lo, code
+    return st.regs[:], st.hi, st.lo, code, st.fpr[:], st.fcr31, st.fpu_acc
 
 
 def _fmt_diff(kind: str, expected, got) -> str:
@@ -128,8 +140,8 @@ def _fmt_diff(kind: str, expected, got) -> str:
 
 def compare_results(golden, native):
     """Raise AssertionError describing any state divergence."""
-    g_regs, g_hi, g_lo, g_code = golden
-    n_regs, n_hi, n_lo, n_code = native
+    g_regs, g_hi, g_lo, g_code, g_fpr, g_fcr, g_acc = golden
+    n_regs, n_hi, n_lo, n_code, n_fpr, n_fcr, n_acc = native
 
     if g_regs != n_regs:
         raise AssertionError(f"regs diverge: {_fmt_diff('regs', g_regs, n_regs)}")
@@ -141,3 +153,13 @@ def compare_results(golden, native):
         raise AssertionError(
             f"exit code diverges: {_fmt_diff('int', g_code, n_code)}"
         )
+    if g_fpr != n_fpr:
+        diffs = [f"f{i}: golden={a:#010x} native={b:#010x}"
+                 for i, (a, b) in enumerate(zip(g_fpr, n_fpr)) if a != b]
+        raise AssertionError("FPU regs diverge: " + "; ".join(diffs))
+    if g_fcr != n_fcr:
+        raise AssertionError(f"FCR31 diverges: golden={g_fcr:#010x} "
+                             f"native={n_fcr:#010x}")
+    if g_acc != n_acc:
+        raise AssertionError(f"FPU ACC diverges: golden={g_acc:#010x} "
+                             f"native={n_acc:#010x}")

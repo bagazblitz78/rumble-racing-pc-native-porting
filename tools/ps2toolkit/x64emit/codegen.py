@@ -3,7 +3,9 @@
 Generated-code calling convention (self-contained, closed world):
   - one native function `int run(void* ctx)` (Win64: ctx in rcx)
   - ctx layout (offsets): regs[i] = i*16 (128-bit: low u64 at +0, high u64
-    at +8), hi = 512, lo = 528 (128-bit each), guest_ram_ptr = 544
+    at +8), hi = 512, lo = 528 (128-bit each), guest_ram_ptr = 544,
+    fpr[32] = 552 (raw float bits), fcr31 = 680, fpu_acc = 684; guest RAM
+    buffer starts at 0x2B0
   - r15 = ctx pointer, r14 = guest RAM base, r10 = branch-condition scratch;
     rax/rcx/rdx/r8/r9 are integer scratch, xmm0-xmm3 are SIMD scratch
   - returns -1 (0xFFFFFFFF) on normal completion, else the syscall code
@@ -37,7 +39,12 @@ from .encoder import R8, R9, R10, R14, R15, RAX, RCX, RDX, Asm, Label
 M32 = 0xFFFFFFFF
 HI_OFF = 512
 LO_OFF = 528
-RAM_OFF = 544
+RAM_PTR_OFF = 544
+FPR_OFF = 552
+FCR31_OFF = 680
+ACC_OFF = 684
+CTX_SIZE = 688
+RAM_OFF = RAM_PTR_OFF
 REG_SIZE = 16
 EXIT_NORMAL = 0xFFFFFFFF  # -1
 
@@ -222,6 +229,8 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         return  # no cache/coherence model in the single-threaded recompiler
     elif insn.opcode == 0x1C:
         emit_mmi(asm, insn)
+    elif insn.opcode == 0x11 or m in ("lwc1", "swc1"):
+        emit_cop1(asm, insn)
     elif m in ("slt", "sltu"):
         _slot64(asm, RAX, rs)
         _slot64(asm, RCX, rt)
@@ -462,6 +471,151 @@ def emit_insn(asm: Asm, insn: DecodedInsn, sys_exit: Label | None = None):
         raise CodeGenError(f"unhandled instruction {m} at {insn.addr:#010x}")
 
 
+def _fpr_ld(asm: Asm, xmm: int, index: int):
+    asm.movd_ld(xmm, R15, FPR_OFF + index * 4)
+
+
+def _fpr_st(asm: Asm, index: int, xmm: int):
+    asm.movd_st(R15, FPR_OFF + index * 4, xmm)
+
+
+def _fpu_binop(asm: Asm, method: str, dst_fpr: int, fs: int, ft: int,
+               acc: bool = False):
+    _fpr_ld(asm, 0, fs)
+    _fpr_ld(asm, 1, ft)
+    getattr(asm, method)(0, 1)
+    if acc:
+        asm.movd_st(R15, ACC_OFF, 0)
+    else:
+        _fpr_st(asm, dst_fpr, 0)
+
+
+def emit_cop1(asm: Asm, insn: DecodedInsn):
+    """Lower one COP1/FPU instruction (fields: fs=rd, ft=rt, fd=sa)."""
+    m = insn.mnemonic
+    fs, ft, fd = insn.rd, insn.rt, insn.shamt
+
+    if m == "mtc1":
+        _slot(asm, RAX, ft)
+        asm.st32(R15, FPR_OFF + fs * 4, RAX)
+    elif m == "mfc1":
+        if ft:
+            asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+            _sto(asm, ft, RAX)
+    elif m == "cfc1":
+        if ft:
+            if fs == 31:
+                asm.ld32(RAX, R15, FCR31_OFF)
+            elif fs == 0:
+                asm.mov_ri(RAX, 0x2E00)
+            else:
+                asm.mov_ri(RAX, 0)
+            _sto(asm, ft, RAX)
+    elif m == "ctc1":
+        if fs == 31:
+            _slot(asm, RAX, ft)
+            asm.st32(R15, FCR31_OFF, RAX)
+    elif m == "lwc1":
+        _addr32(asm, insn.rs, insn.imm, RAX)
+        asm.ld32_ram(RAX, R14, RCX)
+        asm.st32(R15, FPR_OFF + ft * 4, RAX)
+    elif m == "swc1":
+        asm.ld32(RAX, R15, FPR_OFF + ft * 4)
+        _addr32(asm, insn.rs, insn.imm, RDX)
+        asm.st32_ram(R14, RCX, RAX)
+    elif m in ("add.s", "sub.s", "mul.s", "div.s"):
+        _fpu_binop(asm, {"add.s": "addss", "sub.s": "subss",
+                         "mul.s": "mulss", "div.s": "divss"}[m], fd, fs, ft)
+    elif m in ("adda.s", "suba.s", "mula.s"):
+        _fpu_binop(asm, {"adda.s": "addss", "suba.s": "subss",
+                         "mula.s": "mulss"}[m], 0, fs, ft, acc=True)
+    elif m in ("madd.s", "msub.s"):
+        asm.movd_ld(2, R15, ACC_OFF)
+        _fpr_ld(asm, 0, fs)
+        _fpr_ld(asm, 1, ft)
+        asm.mulss(0, 1)
+        asm.addss(2, 0) if m == "madd.s" else asm.subss(2, 0)
+        _fpr_st(asm, fd, 2)
+    elif m in ("madda.s", "msuba.s"):
+        asm.movd_ld(2, R15, ACC_OFF)
+        _fpr_ld(asm, 0, fs)
+        _fpr_ld(asm, 1, ft)
+        asm.mulss(0, 1)
+        asm.addss(2, 0) if m == "madda.s" else asm.subss(2, 0)
+        asm.movd_st(R15, ACC_OFF, 2)
+    elif m == "mov.s":
+        asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+        asm.st32(R15, FPR_OFF + fd * 4, RAX)
+    elif m == "abs.s":
+        asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+        asm.alu_ri("and", RAX, 0x7FFFFFFF)
+        asm.st32(R15, FPR_OFF + fd * 4, RAX)
+    elif m == "neg.s":
+        asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+        asm.alu_ri("xor", RAX, 0x80000000)
+        asm.st32(R15, FPR_OFF + fd * 4, RAX)
+    elif m in ("sqrt.s", "rsqrt.s"):
+        asm.ld32(RAX, R15, FPR_OFF + ft * 4)
+        asm.alu_ri("and", RAX, 0x7FFFFFFF)
+        asm.movd_xmm_gpr(0, RAX)
+        asm.sqrtss(0, 0)
+        if m == "rsqrt.s":
+            _fpr_ld(asm, 1, fs)
+            asm.divss(1, 0)
+            _fpr_st(asm, fd, 1)
+        else:
+            _fpr_st(asm, fd, 0)
+    elif m in ("max.s", "min.s"):
+        _fpr_ld(asm, 0, fs)
+        _fpr_ld(asm, 1, ft)
+        asm.maxss(0, 1) if m == "max.s" else asm.minss(0, 1)
+        _fpr_st(asm, fd, 0)
+    elif m == "cvt.w.s":
+        asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+        asm.mov_rr(RDX, RAX)
+        asm.alu_ri("and", RDX, 0x7F800000)
+        asm.alu_ri("cmp", RDX, 0x4E800000)
+        clamp, positive, store = (asm.new_label() for _ in range(3))
+        asm.jcc("a", clamp)
+        asm.movd_xmm_gpr(0, RAX)
+        asm.cvttss2si(RAX, 0)
+        asm.jmp(store)
+        asm.bind(clamp)
+        asm.alu_ri("and", RAX, 0x80000000)
+        asm.jcc("z", positive)
+        asm.mov_ri(RAX, 0x80000000)
+        asm.jmp(store)
+        asm.bind(positive)
+        asm.mov_ri(RAX, 0x7FFFFFFF)
+        asm.bind(store)
+        asm.st32(R15, FPR_OFF + fd * 4, RAX)
+    elif m == "cvt.s.w":
+        asm.ld32(RAX, R15, FPR_OFF + fs * 4)
+        asm.cvtsi2ss(0, RAX)
+        asm.movd_st(R15, FPR_OFF + fd * 4, 0)
+    elif m == "c.f":
+        asm.ld32(RAX, R15, FCR31_OFF)
+        asm.alu_ri("and", RAX, 0xFF7FFFFF)
+        asm.st32(R15, FCR31_OFF, RAX)
+    elif m in ("c.eq", "c.lt", "c.le"):
+        _fpr_ld(asm, 0, fs)
+        _fpr_ld(asm, 1, ft)
+        asm.ucomiss(0, 1)
+        asm.setcc({"c.eq": "e", "c.lt": "b", "c.le": "be"}[m], RDX)
+        asm.setcc("np", RAX)
+        asm.movzx(R8, RDX)
+        asm.movzx(R9, RAX)
+        asm.alu_rr("and", R8, R9)
+        asm.shift_ri("shl", R8, 23)
+        asm.ld32(RAX, R15, FCR31_OFF)
+        asm.alu_ri("and", RAX, 0xFF7FFFFF)
+        asm.alu_rr("or", RAX, R8)
+        asm.st32(R15, FCR31_OFF, RAX)
+    else:
+        raise CodeGenError(
+            f"COP1 instruction {m} not lowered to x64 yet at {insn.addr:#010x}")
+
+
 _MMI_SSE = {
     # wrapping add/sub
     "paddb": "paddb", "paddh": "paddw", "paddw": "paddd",
@@ -593,8 +747,24 @@ def emit_terminator(asm: Asm, block, labels: dict[int, Label],
         insn = term.insn
         m = insn.mnemonic
         if m.startswith("bc1"):
-            raise CodeGenError(
-                f"COP1 branch {m} not lowered to x64 yet at {insn.addr:#010x}")
+            asm.ld32(RAX, R15, FCR31_OFF)
+            asm.alu_ri("and", RAX, 0x00800000)
+            asm.setcc("e" if m in ("bc1f", "bc1fl") else "ne", R10)
+            asm.movzx(R10, R10)
+            if term.insn.is_likely:
+                skip = asm.new_label()
+                asm.test_rr(R10, R10)
+                asm.jcc("e", skip)
+                emit_insn(asm, term.delay)
+                asm.jmp(_label(labels, term.target, asm))
+                asm.bind(skip)
+                asm.jmp(_label(labels, term.fallthrough, asm))
+            else:
+                emit_insn(asm, term.delay)
+                asm.test_rr(R10, R10)
+                asm.jcc("ne", _label(labels, term.target, asm))
+                asm.jmp(_label(labels, term.fallthrough, asm))
+            return
         if m in ("beq", "bne", "beql", "bnel"):
             _slot64(asm, RAX, insn.rs)
             _slot64(asm, RCX, insn.rt)

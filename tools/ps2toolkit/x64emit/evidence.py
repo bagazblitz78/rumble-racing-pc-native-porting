@@ -6,8 +6,8 @@ section contains x86-64 machine code translated from EE instructions, with
 no emulator anywhere in the execution path.
 
 Image layout (all runtime data in bss, zero-filled by the loader):
-  bss+0x000: ctx struct (128-bit regs[32], hi, lo, ram_ptr) - 552 bytes
-  bss+0x230: guest RAM                                     - 32 MiB
+  bss+0x000: ctx struct (regs, hi/lo, ram, fpr, fcr31, acc) - 688 bytes
+  bss+0x2B0: guest RAM                                     - 32 MiB
 
 The entry stub (in .text, before the guest code):
   sub  rsp, 0x28                 ; Win64 shadow + 16-byte alignment
@@ -36,7 +36,7 @@ _RAM_PTR_SLOT = 544
 
 def _stub(layout: Layout, entry_offset: int = 0) -> bytes:
     ctx_va = layout.image_base + layout.bss_rva
-    ram_va = ctx_va + 0x230
+    ram_va = ctx_va + 0x2B0
     iat_va_rva = layout.iat_rva[("KERNEL32.DLL", "ExitProcess")]
     jmp_disp = iat_va_rva - (layout.text_rva + _STUB_LEN)
     call_disp = _STUB_LEN + entry_offset - 36  # call target = guest entry
@@ -61,7 +61,7 @@ def build_exe(program: Program, out_path: Path) -> Path:
 
     data = build_console_exe(
         build_text,
-        bss_size=0x230 + RAM_SIZE,
+        bss_size=0x2B0 + RAM_SIZE,
         imports=[("KERNEL32.DLL", "ExitProcess")],
         entry_text_offset=0,
     )
