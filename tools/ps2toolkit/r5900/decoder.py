@@ -46,15 +46,18 @@ _OPCODE = {
     0x1E: "lq", 0x1F: "sq",
     0x20: "lb", 0x21: "lh", 0x22: "lwl", 0x23: "lw", 0x24: "lbu", 0x25: "lhu",
     0x26: "lwr", 0x27: "lwu", 0x28: "sb", 0x29: "sh", 0x2A: "swl", 0x2B: "sw",
-    0x2E: "swr", 0x2F: "cache", 0x33: "pref", 0x37: "ld", 0x3F: "sd",
+    0x2E: "swr", 0x2F: "cache", 0x31: "lwc1", 0x33: "pref",
+    0x37: "ld", 0x39: "swc1", 0x3F: "sd",
 }
 
 _BRANCHES = {
     "beq", "bne", "blez", "bgtz", "bltz", "bgez",
     "beql", "bnel", "blezl", "bgtzl",
     "bltzl", "bgezl", "bltzal", "bgezal", "bltzall", "bgezall",
+    "bc1f", "bc1t", "bc1fl", "bc1tl",
 }
-_LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall", "bgezall"}
+_LIKELY = {"beql", "bnel", "blezl", "bgtzl", "bltzl", "bgezl", "bltzall",
+           "bgezall", "bc1fl", "bc1tl"}
 _BRANCH_LINKS = {"bltzal", "bgezal", "bltzall", "bgezall"}
 
 # MMI: opcode 0x1C, group selected by `funct`, operation by `sa` (bits 10:6).
@@ -92,13 +95,28 @@ _MMI_SINGLE = {
     0x31: "pmthl", 0x34: "psllh", 0x36: "psrlh", 0x37: "psrah",
     0x3C: "psllw", 0x3E: "psrlw", 0x3F: "psraw",
 }
+# COP1 (FPU): fmt=0x10 single, fmt=0x14 word. Fields differ from the usual
+# MIPS layout: fs = rd, ft = rt, fd = sa.
+_COP1_S = {
+    0x00: "add.s", 0x01: "sub.s", 0x02: "mul.s", 0x03: "div.s",
+    0x04: "sqrt.s", 0x05: "abs.s", 0x06: "mov.s", 0x07: "neg.s",
+    0x16: "rsqrt.s",
+    0x18: "adda.s", 0x19: "suba.s", 0x1A: "mula.s",
+    0x1C: "madd.s", 0x1D: "msub.s", 0x1E: "madda.s", 0x1F: "msuba.s",
+    0x24: "cvt.w.s", 0x28: "max.s", 0x29: "min.s",
+    0x30: "c.f", 0x32: "c.eq", 0x34: "c.lt", 0x36: "c.le",
+}
+_COP1_W = {0x20: "cvt.s.w"}
+_COP1_BC1 = {0: "bc1f", 1: "bc1t", 2: "bc1fl", 3: "bc1tl"}
+
 _MMI_UNARY = {
     "pabsw", "pabsh", "pext5", "ppac5", "pcpyh", "pexeh", "prevh",
     "pexch", "pexew", "prot3w", "pexcw", "mfhi1", "mflo1", "mthi1",
     "mtlo1", "pmthi", "pmtlo", "pmfhi", "pmflo",
 }
-_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld", "lq"}
-_STORES = {"sb", "sh", "swl", "sw", "swr", "sd", "sq"}
+_LOADS = {"lb", "lh", "lwl", "lw", "lbu", "lhu", "lwr", "lwu", "ld", "lq",
+          "lwc1"}
+_STORES = {"sb", "sh", "swl", "sw", "swr", "sd", "sq", "swc1"}
 _JUMPS = {"j", "jal"}
 _LINKERS = {"jal", "jalr"}
 
@@ -163,6 +181,20 @@ class DecodedInsn:
     def disasm(self) -> str:
         m = self.mnemonic
         r = lambda n: f"${REG_NAMES[n]}"
+        if self.opcode == 0x11 and m != "unsupported":
+            fs, ft, fd = self.rd, self.rt, self.shamt
+            if m in ("mfc1", "cfc1", "mtc1", "ctc1"):
+                return f"{m} {r(self.rt)}, $f{fs}"
+            if m.startswith("bc1"):
+                return f"{m} 0x{self.addr + 4 + self.imm * 4:08X}"
+            if m in ("mov.s", "abs.s", "neg.s", "sqrt.s", "cvt.w.s",
+                     "cvt.s.w", "c.f"):
+                return f"{m} $f{fd}, $f{fs}"
+            if m.startswith("c."):
+                return f"{m} $f{fs}, $f{ft}"
+            return f"{m} $f{fd}, $f{fs}, $f{ft}"
+        if m in ("lwc1", "swc1"):
+            return f"{m} $f{self.rt}, {self.imm}({r(self.rs)})"
         if self.opcode == 0x1C and m != "unsupported":
             if m in _MMI_UNARY:
                 return f"{m} {r(self.rd)}, {r(self.rt)}"
@@ -249,6 +281,26 @@ def decode(word: int, addr: int) -> DecodedInsn:
         else:
             mnemonic = "unsupported"
         return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt, imm, uimm)
+
+    if opcode == 0x11:  # COP1 / FPU
+        if rs == 0x00:
+            mnemonic = "mfc1"
+        elif rs == 0x02:
+            mnemonic = "cfc1"
+        elif rs == 0x04:
+            mnemonic = "mtc1"
+        elif rs == 0x06:
+            mnemonic = "ctc1"
+        elif rs == 0x08:
+            mnemonic = _COP1_BC1[rt & 3]
+        elif rs == 0x10:
+            mnemonic = _COP1_S.get(funct, "unsupported")
+        elif rs == 0x14:
+            mnemonic = _COP1_W.get(funct, "unsupported")
+        else:
+            mnemonic = "unsupported"
+        return DecodedInsn(addr, word, opcode, mnemonic, rs, rt, rd, shamt,
+                           imm, uimm)
 
     if opcode == 0x1C:  # MMI
         group = _MMI_GROUPS.get(funct)

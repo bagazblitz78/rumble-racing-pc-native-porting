@@ -130,6 +130,9 @@ class EEState:
         self.hi = 0
         self.lo = 0
         self.cop0 = [0] * 32  # COP0 data/control registers (32-bit)
+        self.fpr = [0] * 32   # COP1 registers, raw IEEE-754 single bits
+        self.fcr31 = 0        # FPU control/status (condition bit 23)
+        self.fpu_acc = 0      # FPU accumulator (raw float bits)
         self.pc = pc
 
     def _set(self, reg: int, value: int):
@@ -356,6 +359,9 @@ def _exec_alu(st: EEState, mem: EEMemory, insn: DecodedInsn) -> None:
     elif insn.opcode == 0x1C:  # MMI
         from .mmi import execute_mmi
         execute_mmi(st, insn)
+    elif insn.opcode == 0x11 or m in ("lwc1", "swc1"):
+        from .fpu import execute_cop1
+        execute_cop1(st, insn, mem)
     else:
         raise UnsupportedInstruction(insn.addr, insn.raw, insn.mnemonic)
 
@@ -377,6 +383,10 @@ def _branch_target(st: EEState, insn: DecodedInsn) -> tuple[bool, int]:
         return s64(st._get(rs)) < 0, target
     if m in ("bgez", "bgezl", "bgezal", "bgezall"):
         return s64(st._get(rs)) >= 0, target
+    if m.startswith("bc1"):
+        condition = 1 if (st.fcr31 & 0x00800000) else 0
+        taken = (condition == 0) if m in ("bc1f", "bc1fl") else (condition != 0)
+        return taken, target
     if m == "j":
         return True, insn.target
     if m == "jal":

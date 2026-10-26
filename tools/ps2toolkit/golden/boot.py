@@ -21,6 +21,7 @@ it so tests can inspect what the boot code wrote.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable
 
@@ -94,6 +95,7 @@ def trace_boot(
 
     steps = 0
     unique_pcs: set[int] = set()
+    hot_pcs: Counter[int] = Counter()
     recent_pcs: list[int] = []
     syscalls: dict[int, int] = {}
     syscall_log: list[dict] = []
@@ -105,6 +107,7 @@ def trace_boot(
             stop_reason = "pc-zero"
             break
         unique_pcs.add(st.pc)
+        hot_pcs[st.pc] += 1
         recent_pcs.append(st.pc)
         if len(recent_pcs) > 32:
             del recent_pcs[0]
@@ -164,6 +167,7 @@ def trace_boot(
         "syscalls": {f"0x{code:02x}": n for code, n in sorted(syscalls.items())},
         "syscall_log": syscall_log,
         "recent_pcs": recent_pcs,
+        "hot_pcs": [{"pc": pc, "count": n} for pc, n in hot_pcs.most_common(10)],
         "hi": st.hi,
         "lo": st.lo,
     }
@@ -201,7 +205,11 @@ def render_markdown(report: dict, source: str = "", elf_name: str = "") -> str:
     elif report["stop_reason"] == "break":
         lines.append(f"- `break` code {detail['code']} at `0x{detail['pc']:08X}`")
     elif report["stop_reason"] == "step-limit":
-        lines.append(f"- Step budget exhausted at `0x{detail['pc']:08X}`")
+        lines.append(
+            f"- Step budget exhausted at `0x{detail['pc']:08X}`; no "
+            "unsupported instruction or memory fault was reached (the guest "
+            "is still inside its startup/table-initialisation loops)."
+        )
     else:
         lines.append(f"- `{detail}`")
 

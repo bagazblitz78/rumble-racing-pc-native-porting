@@ -374,10 +374,9 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "",
         "## Implications for the recompiler",
         "",
-        "- **COP1/FPU** now dominates the remaining gap (14,065 scalar words "
-        "plus 7,231 FPU memory forms). LQ/SQ, COP0 and the MMI set used by "
-        "the game are decoded and executed by the golden model as of T3.5, "
-        "but the x64 emitter still needs SSE2 lowering for MMI/LQ/SQ.",
+        "- **VU0/COP2** is the only large undecoded block left (1,937 VU "
+        "memory forms + 1,454 macro-mode ops), plus 44 unaligned 64-bit "
+        "forms. The scalar front-end now decodes almost the whole boot path.",
         "- **FPU memory forms** (LWC1/SWC1/LDC1/SDC1) travel with COP1 and need "
         "the same FPU state hand-off.",
         "- **64-bit integer forms** are translated as of T3.3: GPRs hold "
@@ -386,9 +385,9 @@ def render_markdown(report: dict, top: int = 20) -> str:
         "unaligned LDL/LDR/SDL/SDR forms remain.",
         "- **COP2/VU0** macro-mode and LQC2/SQC2 need VU0 register state and "
         "will likely be stubbed behind an HLE boundary first.",
-        "- **Cheap wins already landed** (T3.2): MOVZ/MOVN, SYNC, CACHE/PREF "
-        "and the branch-likely / REGIMM branch-and-link forms. The residual "
-        "'other' bucket is small enough to inspect case by case.",
+        "- **Native codegen is now the gap, not decoding.** MMI, LQ/SQ and "
+        "COP1 run in the golden model but still need SSE2 lowering in "
+        "x64emit before the recompiler can execute the same code.",
         "- **Indirect control transfers** shown above are jump tables and "
         "function pointers; static recompilation must resolve them (or fall "
         "back to a dispatch stub) before the whole image is reachable.",

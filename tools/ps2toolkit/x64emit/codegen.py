@@ -423,6 +423,9 @@ def emit_terminator(asm: Asm, block, labels: dict[int, Label],
     if isinstance(term, BranchTerm):
         insn = term.insn
         m = insn.mnemonic
+        if m.startswith("bc1"):
+            raise CodeGenError(
+                f"COP1 branch {m} not lowered to x64 yet at {insn.addr:#010x}")
         if m in ("beq", "bne", "beql", "bnel"):
             _slot64(asm, RAX, insn.rs)
             _slot64(asm, RCX, insn.rt)

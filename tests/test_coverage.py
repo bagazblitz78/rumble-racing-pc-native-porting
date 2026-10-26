@@ -118,17 +118,17 @@ def test_indirect_call_continues_caller():
 def test_unsupported_words_are_counted_by_category():
     report = scan([
         0x70000030,   # MMI (PMFHL, still unsupported)
-        0x460062C6,   # COP1/FPU (MOV.S)
+        0x4A0003BF,   # COP2/VU0 (VADD)
         0x68000000,   # LDL (64-bit unaligned load, still unsupported)
         a.jr(a.RA),
         a.NOP,
     ])
     assert report["unsupported_words"] == 3
     assert report["unsupported_categories"] == {
-        "mmi": 1, "cop1-fpu": 1, "64-bit-memory": 1,
+        "mmi": 1, "cop2-vu0": 1, "64-bit-memory": 1,
     }
     assert {s["category"] for s in report["unsupported_samples"]} == {
-        "mmi", "cop1-fpu", "64-bit-memory",
+        "mmi", "cop2-vu0", "64-bit-memory",
     }
     # 3 unsupported of 5 reachable words
     assert report["supported_pct"] == 40.0
